@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FindReferee</title>
+  <style>
+    :root { --ink:#17212b; --muted:#64717d; --line:#dce5e9; --paper:#fbfcfa; --card:#ffffff; --teal:#0e766e; --teal-dark:#09574f; --soft:#e9f5f3; --amber:#fff5db; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:linear-gradient(135deg,#f4f7f5 0%,#edf5f5 55%,#f9f7f0 100%); font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; min-height:100vh; }
+    .shell { max-width:1160px; margin:0 auto; padding:38px 22px 64px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:30px; }
+    h1 { font-family:Georgia,serif; font-weight:500; font-size:clamp(36px,5vw,60px); letter-spacing:-.04em; line-height:.98; margin:0 0 13px; max-width:650px; }
+    .lede { color:var(--muted); font-size:16px; line-height:1.55; max-width:650px; margin:0; }
+    .mark { width:58px; height:58px; border:1px solid #b9d6d2; border-radius:18px; display:grid; place-items:center; color:var(--teal); background:#f4fbfa; font-family:Georgia,serif; font-size:27px; transform:rotate(-6deg); }
+    .header-tools { display:flex; flex-direction:column; align-items:flex-end; gap:12px; }
+    .view-toggle { display:flex; align-items:center; gap:3px; padding:3px; border:1px solid #cbdedd; border-radius:999px; background:#f7fcfb; }
+    .view-toggle-label { color:var(--muted); font-size:11px; font-weight:750; padding:0 5px 0 8px; }
+    .view-toggle button { border:0; border-radius:999px; background:transparent; color:var(--muted); cursor:pointer; font:inherit; font-size:11px; font-weight:800; padding:6px 9px; }
+    .view-toggle button.active { background:var(--teal); color:#fff; }
+    body.minimal-mode .detail-only { display:none !important; }
+    .thinking-facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:16px auto 0; max-width:500px; text-align:left; }
+    .thinking-fact { background:#f7fbfa; border:1px solid #d7e8e5; border-radius:10px; padding:9px 10px; }
+    .thinking-fact strong { display:block; color:#3b5558; font-size:11px; margin-bottom:3px; }
+    .thinking-fact span { color:#64777b; font-size:11px; line-height:1.4; }
+    .thinking-current { margin:14px auto 0 !important; color:var(--teal-dark) !important; font-weight:750; }
+    .thinking-clues { max-width:540px; margin:14px auto 0; text-align:left; background:#fff; border:1px solid #d7e8e5; border-radius:11px; padding:9px 12px; }
+    .thinking-clues h3 { color:#3b5558; font-size:11px; margin:0 0 5px; text-transform:uppercase; letter-spacing:.08em; }
+    .thinking-clues ul { margin:0; padding-left:18px; color:#52616a; font-size:11px; line-height:1.45; max-height:150px; overflow:auto; }
+    .thinking-clues li + li { margin-top:3px; }
+    .layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(300px,.9fr); gap:20px; align-items:start; }
+    .card { background:rgba(255,255,255,.9); border:1px solid var(--line); border-radius:20px; box-shadow:0 16px 50px rgba(31,61,67,.07); padding:24px; }
+    .card h2 { font-size:18px; margin:0 0 5px; }
+    .hint { color:var(--muted); font-size:13px; line-height:1.5; margin:0 0 19px; }
+    .tabs { display:flex; gap:5px; border-bottom:1px solid var(--line); margin:0 -24px 21px; padding:0 24px; }
+    .tab { background:none; border:0; color:var(--muted); cursor:pointer; padding:10px 3px 12px; margin-right:17px; font:inherit; font-size:14px; font-weight:700; border-bottom:2px solid transparent; }
+    .tab.active { color:var(--teal-dark); border-bottom-color:var(--teal); }
+    label { display:block; font-size:13px; font-weight:750; margin:17px 0 7px; }
+    textarea, input[type=text], select { width:100%; border:1px solid #cfdde0; border-radius:11px; padding:12px 13px; outline:none; color:var(--ink); background:#fff; font:inherit; font-size:14px; transition:border .15s, box-shadow .15s; }
+    textarea:focus, input[type=text]:focus, select:focus { border-color:#4aaca3; box-shadow:0 0 0 3px #dff3f0; }
+    #candidates { min-height:108px; resize:vertical; }
+    #text-input { min-height:210px; resize:vertical; }
+    .drop { border:1.5px dashed #a9c8c5; border-radius:13px; padding:16px; background:#f7fcfb; text-align:center; color:var(--muted); font-size:13px; cursor:pointer; }
+    .drop:hover, .drop.drag { background:var(--soft); border-color:var(--teal); }
+    .drop strong { display:block; color:var(--teal-dark); margin-bottom:4px; }
+    #file-input { display:none; }
+    .files { display:flex; flex-wrap:wrap; gap:7px; margin-top:10px; }
+    .file { display:flex; align-items:center; gap:5px; background:#eef4f4; border-radius:999px; color:#3f5a5d; font-size:12px; padding:4px 6px 4px 9px; }
+    .file button, .reference-file button { border:0; background:transparent; color:#789094; cursor:pointer; font-size:14px; line-height:1; padding:1px 3px; }
+    .file button:hover, .reference-file button:hover { color:#973f36; }
+    button.primary { width:100%; border:0; border-radius:11px; background:var(--teal); color:#fff; cursor:pointer; font:inherit; font-weight:800; padding:13px 16px; margin-top:20px; box-shadow:0 7px 16px rgba(14,118,110,.18); }
+    button.primary:hover { background:var(--teal-dark); }
+    button.primary:disabled { cursor:wait; opacity:.65; }
+    .notice { background:var(--amber); color:#66522b; border-radius:12px; padding:12px 13px; font-size:12px; line-height:1.5; margin-top:15px; }
+    .result-pane { min-height:300px; }
+    .empty { color:var(--muted); font-size:14px; line-height:1.6; padding:33px 5px 10px; }
+    .result-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:20px; }
+    .result-head h2 { font-family:Georgia,serif; font-size:27px; font-weight:500; margin:0; }
+    .badge { background:var(--soft); color:var(--teal-dark); border-radius:999px; padding:6px 9px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; white-space:nowrap; }
+    .summary { color:#40515a; line-height:1.6; font-size:14px; margin:0 0 19px; }
+    .candidate { margin:14px 0; }
+    .candidate-line { display:flex; justify-content:space-between; gap:12px; font-size:14px; margin-bottom:6px; }
+    .candidate-line strong { font-weight:750; }
+    .prob { color:var(--teal-dark); font-weight:850; }
+    .bar { height:9px; background:#e9eeee; border-radius:99px; overflow:hidden; }
+    .fill { height:100%; background:linear-gradient(90deg,#55b7aa,var(--teal)); border-radius:99px; }
+    .probability-chart { display:flex; align-items:flex-end; gap:10px; min-height:210px; margin:12px 0 22px; padding:14px 8px 0; border-bottom:1px solid var(--line); overflow-x:auto; }
+    .chart-column { min-width:58px; flex:1 1 0; max-width:110px; height:190px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:5px; }
+    .chart-value { color:var(--teal-dark); font-size:11px; font-weight:850; }
+    .chart-bar-track { width:100%; height:145px; display:flex; align-items:flex-end; justify-content:center; background:linear-gradient(to top,rgba(14,118,110,.05),transparent); border-radius:8px 8px 0 0; }
+    .chart-bar { width:min(54px,78%); min-height:3px; background:linear-gradient(180deg,#55b7aa,var(--teal)); border-radius:7px 7px 0 0; }
+    .chart-column.no-match .chart-bar { background:linear-gradient(180deg,#b8c8c8,#87979a); }
+    .chart-label { width:100%; color:#52616a; font-size:10px; line-height:1.2; text-align:center; overflow-wrap:anywhere; }
+    .explanation { color:var(--muted); font-size:12px; line-height:1.45; margin:6px 0 0; }
+    .section-title { color:#738188; text-transform:uppercase; letter-spacing:.1em; font-size:11px; font-weight:850; margin:23px 0 10px; }
+    ul { color:#52616a; font-size:13px; line-height:1.55; margin:0; padding-left:19px; }
+    .pair { border-top:1px solid var(--line); padding:12px 0; }
+    .pair:first-child { border-top:0; padding-top:0; }
+    .pair-top { display:flex; justify-content:space-between; gap:10px; font-size:13px; font-weight:750; }
+    .error { background:#fff0ef; color:#973f36; border:1px solid #f2c6c1; padding:12px; border-radius:11px; font-size:13px; line-height:1.5; }
+    .result-actions { display:flex; gap:7px; margin:-4px 0 18px; }
+    .result-actions button { border:1px solid #cbdcdd; border-radius:9px; background:#fff; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:12px; font-weight:750; padding:7px 10px; }
+    .result-actions button:hover { background:var(--soft); }
+    .compact-result { background:#f7fbfa; border:1px solid #d7e8e5; border-radius:12px; padding:13px; margin-bottom:13px; }
+    .compact-result h3 { margin:0 0 6px; font-size:16px; }
+    .compact-result p { color:#52616a; line-height:1.5; font-size:13px; margin:5px 0; }
+    .compact-result .candidate-line { margin-top:10px; }
+    .report-details { border-top:1px solid var(--line); padding-top:10px; }
+    .report-details > summary { cursor:pointer; color:var(--teal-dark); font-size:13px; font-weight:800; padding:4px 0 9px; }
+    .meta-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-top:22px; }
+    .meta { background:#f5f8f7; border-radius:10px; padding:10px; font-size:11px; color:var(--muted); line-height:1.4; }
+    .meta strong { display:block; color:#3b5054; font-size:12px; margin-bottom:2px; }
+    .secondary-action { width:100%; border:1px solid #b8d2d0; border-radius:11px; background:#f7fcfb; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:13px; font-weight:800; padding:11px 16px; margin-top:9px; }
+    .secondary-action:hover { background:var(--soft); }
+    .manual-prompt { min-height:250px; resize:vertical; background:#f8fbfa; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; line-height:1.5; }
+    .manual-response { min-height:150px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+    .source { border-top:1px solid var(--line); padding:10px 0; font-size:12px; line-height:1.45; }
+    .source:first-child { border-top:0; padding-top:0; }
+    .source a { color:var(--teal-dark); font-weight:750; text-decoration:none; }
+    .source a:hover { text-decoration:underline; }
+    .reference-panel { background:#f7fbfa; border:1px solid #d7e8e5; border-radius:13px; padding:13px; margin-top:15px; }
+    .reference-panel h3 { font-size:13px; margin:0 0 5px; }
+    .reference-panel .hint { font-size:12px; margin-bottom:10px; }
+    .reference-groups { display:grid; gap:8px; }
+    .reference-group { background:#fff; border:1px solid #dce8e7; border-radius:10px; padding:9px 10px; }
+    .reference-group strong { display:block; color:#3b5558; font-size:12px; margin-bottom:6px; }
+    .reference-group input { width:100%; color:var(--muted); font-size:11px; }
+    .profile-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:7px; }
+    .profile-grid input, .profile-grid textarea { width:100%; border:1px solid #d7e5e4; border-radius:7px; padding:7px 8px; color:var(--ink); font:inherit; font-size:11px; }
+    .profile-grid textarea { grid-column:1 / -1; min-height:45px; resize:vertical; }
+    .profile-actions { display:flex; gap:6px; align-items:center; }
+    .profile-actions button, .profile-actions select { border:1px solid #c7dcda; border-radius:7px; background:#f8fcfb; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:10px; padding:6px 7px; }
+    .profile-actions select { min-width:0; flex:1; }
+    .card-manager { margin-top:12px; }
+    .card-manager-toggle { width:100%; border:1px solid #b8d2d0; border-radius:9px; background:#fff; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:12px; font-weight:800; padding:9px 10px; text-align:left; }
+    .card-manager-body { background:#fff; border:1px solid #dce8e7; border-radius:10px; margin-top:8px; padding:10px; }
+    .manager-toolbar { display:flex; gap:6px; align-items:center; margin-bottom:9px; }
+    .manager-toolbar button, .editor-actions button, .custom-actions button { border:1px solid #c7dcda; border-radius:7px; background:#f8fcfb; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:11px; font-weight:750; padding:6px 8px; }
+    .manager-toolbar button:hover, .editor-actions button:hover, .custom-actions button:hover { background:var(--soft); }
+    .manager-toolbar span { color:var(--muted); font-size:11px; margin-left:auto; }
+    .saved-card-list { display:grid; gap:6px; }
+    .saved-card { display:flex; align-items:center; justify-content:space-between; gap:7px; border:1px solid #e0eae8; border-radius:8px; padding:7px 8px; }
+    .saved-card strong { color:#3b5558; font-size:12px; }
+    .saved-card small { color:var(--muted); display:block; font-size:10px; margin-top:2px; }
+    .saved-card-actions { display:flex; gap:3px; }
+    .saved-card-actions button { border:0; background:transparent; color:var(--teal-dark); cursor:pointer; font-size:11px; padding:4px; }
+    .saved-card-actions button.delete-card { color:#973f36; }
+    .card-editor { border-top:1px solid #e0eae8; margin-top:10px; padding-top:10px; }
+    .card-editor h4 { font-size:13px; margin:0 0 8px; }
+    .editor-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+    .editor-grid label { margin:0; font-size:10px; color:#52616a; }
+    .editor-grid input, .editor-grid textarea { margin-top:3px; border:1px solid #d7e5e4; border-radius:7px; padding:7px 8px; font-size:11px; }
+    .editor-grid textarea { min-height:52px; resize:vertical; }
+    .editor-grid .wide { grid-column:1 / -1; }
+    .custom-fields { display:grid; gap:5px; margin-top:7px; }
+    .custom-row { display:grid; grid-template-columns:.7fr 1fr auto; gap:5px; }
+    .custom-row input { border:1px solid #d7e5e4; border-radius:7px; padding:6px 7px; font-size:11px; }
+    .custom-row button { border:0; background:transparent; color:#973f36; cursor:pointer; }
+    .editor-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+    .editor-actions .research-card { background:var(--teal); color:#fff; border-color:var(--teal); }
+    .research-status { color:var(--muted); font-size:11px; line-height:1.4; margin-top:7px; }
+    .research-sources { border-top:1px solid #e0eae8; margin-top:7px; padding-top:6px; }
+    .research-sources a { color:var(--teal-dark); font-size:11px; }
+    .control-panel { background:#f8fbfa; border:1px solid #dce8e7; border-radius:12px; padding:11px 12px; margin-top:14px; }
+    .control-panel h3 { font-size:13px; margin:0 0 4px; }
+    .control-panel p { color:var(--muted); font-size:11px; margin:0 0 8px; }
+    .control-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 10px; }
+    .control-grid label { display:flex; align-items:center; gap:6px; margin:0; color:#52616a; font-size:11px; font-weight:600; }
+    .control-grid input { width:auto; }
+    .reference-count { color:var(--teal); font-size:11px; margin-top:4px; }
+    .reference-files { display:grid; gap:3px; margin-top:7px; }
+    .reference-file { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#52616a; font-size:11px; background:#f5f9f8; border-radius:6px; padding:4px 6px 4px 8px; }
+    .sync-reference { border:1px solid #b8d2d0; border-radius:8px; background:#fff; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:11px; font-weight:800; padding:6px 8px; margin-bottom:9px; }
+    .thinking { text-align:center; padding:24px 10px 10px; color:var(--muted); }
+    .thinking h2 { color:var(--ink); font-family:Georgia,serif; font-size:24px; font-weight:500; margin:0 0 4px; }
+    .thinking p { margin:0; font-size:13px; }
+    .thinking-note { color:#819096 !important; font-size:11px !important; margin-top:8px !important; }
+    .cartoon-stage { height:150px; position:relative; display:grid; place-items:center; margin-bottom:8px; }
+    .cartoon { width:104px; height:94px; position:relative; cursor:pointer; animation:floaty 2.4s ease-in-out infinite; }
+    .cartoon.clicked { animation:cartoonClick .7s cubic-bezier(.2,.8,.3,1); }
+    .cartoon .head { position:absolute; left:19px; top:16px; width:66px; height:59px; background:#f4c66b; border:3px solid #754f35; border-radius:48% 48% 44% 44%; }
+    .cartoon .ear { position:absolute; width:22px; height:24px; background:#f4c66b; border:3px solid #754f35; top:5px; transform:rotate(35deg); }
+    .cartoon .ear.left { left:15px; border-radius:8px 20px 3px 17px; }
+    .cartoon .ear.right { right:15px; transform:rotate(-35deg); border-radius:20px 8px 17px 3px; }
+    .cartoon .eye { position:absolute; top:33px; width:10px; height:13px; background:#24343a; border-radius:50%; animation:blink 4s infinite; }
+    .cartoon .eye.left { left:35px; } .cartoon .eye.right { right:35px; }
+    .cartoon .beak { position:absolute; left:46px; top:48px; width:13px; height:10px; background:#e88953; border:2px solid #754f35; border-radius:2px 8px 8px 8px; transform:rotate(45deg); }
+    .cartoon .scarf { position:absolute; left:24px; top:70px; width:56px; height:13px; background:#4ea9a0; border:3px solid #356f6a; border-radius:9px; }
+    .cartoon .magnifier { position:absolute; right:1px; bottom:5px; width:30px; height:30px; border:5px solid #356f6a; border-radius:50%; background:rgba(232,250,247,.75); animation:searchy 1.7s ease-in-out infinite; }
+    .cartoon .magnifier:after { content:""; position:absolute; width:22px; height:6px; background:#356f6a; right:-18px; bottom:-10px; border-radius:6px; transform:rotate(48deg); }
+    .spark { position:absolute; color:#e1a840; font-size:20px; animation:twinkle 1.8s infinite; }
+    .spark.one { left:22%; top:21%; } .spark.two { right:20%; top:12%; animation-delay:.5s; } .spark.three { right:15%; bottom:17%; animation-delay:1s; }
+    .thinking-steps { display:flex; justify-content:center; flex-wrap:wrap; gap:6px; margin-top:16px; }
+    .thinking-step { display:flex; align-items:center; gap:6px; min-width:190px; border:1px solid #dce8e7; border-radius:8px; background:#f8fbfa; color:#6b8487; padding:7px 9px; font-size:11px; text-align:left; }
+    .thinking-step .step-mark { color:#9aabad; font-weight:850; }
+    .thinking-step.active { background:#cdece7; border-color:#a8d9d1; color:var(--teal-dark); font-weight:800; }
+    .thinking-step.active .step-mark { color:var(--teal-dark); }
+    .thinking-step.done { background:#eef7f5; color:#4f7473; }
+    .thinking-step.done .step-mark { color:var(--teal); }
+    .language-profile, .ambiguity { border-radius:12px; padding:12px 13px; margin:0 0 17px; }
+    .language-profile { background:#f6fbfa; border:1px solid #d7e8e5; }
+    .ambiguity { background:#fff5db; border:1px solid #efd99c; color:#66522b; }
+    .language-profile h3, .ambiguity h3 { font-size:13px; margin:0 0 7px; }
+    .language-profile p, .ambiguity p { color:#52616a; font-size:12px; line-height:1.5; margin:5px 0; }
+    .language-profile ul, .ambiguity ul { font-size:12px; }
+    .hypothesis, .issue { border-top:1px solid #deebe8; padding:7px 0; font-size:12px; line-height:1.45; color:#52616a; }
+    .hypothesis:first-child, .issue:first-child { border-top:0; }
+    .discovered { margin:13px 0; }
+    @keyframes floaty { 0%,100% { transform:translateY(0) rotate(-2deg); } 50% { transform:translateY(-7px) rotate(2deg); } }
+    @keyframes blink { 0%,44%,48%,100% { transform:scaleY(1); } 46% { transform:scaleY(.12); } }
+    @keyframes searchy { 0%,100% { transform:rotate(-8deg) translate(0,0); } 50% { transform:rotate(12deg) translate(4px,-4px); } }
+    @keyframes twinkle { 0%,100% { opacity:.35; transform:scale(.8); } 50% { opacity:1; transform:scale(1.15); } }
+    @keyframes cartoonClick { 0% { transform:scale(1) rotate(0); } 35% { transform:scale(1.18) rotate(-8deg); } 68% { transform:scale(.92) rotate(7deg); } 100% { transform:scale(1) rotate(0); } }
+    @media (prefers-reduced-motion:reduce) { .cartoon, .cartoon .eye, .cartoon .magnifier, .spark { animation:none; } .cartoon.clicked { animation:cartoonClick .7s ease; } }
+    @media (max-width:800px) { .layout { grid-template-columns:1fr; } header { margin-bottom:23px; } .mark { display:none; } .header-tools { align-items:flex-start; } .thinking-facts { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body class="minimal-mode">
+  <main class="shell">
+    <header>
+      <div><h1>Who might have written this report?</h1><p class="lede">Log in to Codex, upload a report, enter possible referees, and start the analysis.</p></div>
+      <div class="header-tools"><div class="view-toggle" role="group" aria-label="View mode"><span class="view-toggle-label">View</span><button type="button" data-view="detailed" aria-pressed="false">Detailed</button><button type="button" class="active" data-view="minimal" aria-pressed="true">Minimal</button></div><div class="mark">Aa</div></div>
+    </header>
+    <section class="layout">
+      <form class="card" id="analysis-form">
+        <div class="tabs"><button type="button" class="tab active" data-mode="attribution">Attribute a document</button><button type="button" class="tab" data-mode="comparison">Compare documents</button></div>
+        <input type="hidden" name="mode" id="mode" value="attribution">
+        <div id="candidate-field"><h2>Candidate authors</h2><p class="hint">Add one name per line. Use / between alternate names for the same author. Leave blank to let AI discover likely public authors first.</p><textarea id="candidates" name="candidates" placeholder="Jane Austen&#10;George Eliot / Mary Ann Evans&#10;Unknown author"></textarea><div class="card-manager detail-only"><button type="button" class="card-manager-toggle" id="toggle-card-manager">Manage candidate information cards</button><div class="card-manager-body" id="card-manager-body" hidden><div class="manager-toolbar"><button type="button" id="new-card">New card</button><button type="button" id="sort-cards">Sort A–Z</button><span>Saved locally in this browser</span></div><div class="saved-card-list" id="saved-card-list"></div><div class="card-editor" id="card-editor" hidden><h4 id="card-editor-title">Edit candidate card</h4><div class="editor-grid"><label class="wide">Candidate name<input id="profile-name" type="text" placeholder="Full name"></label><label>Aliases / alternate names<input id="profile-aliases" type="text" placeholder="Pen names, alternate spellings"></label><label>Nationality / country<input id="profile-nationality" type="text" placeholder="Only verified or user-provided information"></label><label>Education / institutions<textarea id="profile-education" placeholder="Degrees, schools, departments"></textarea></label><label>Languages<input id="profile-languages" type="text" placeholder="Languages explicitly reported"></label><label>Academic field<input id="profile-academic-field" type="text" placeholder="Research field or profession"></label><label>Affiliations<textarea id="profile-affiliations" placeholder="Universities, organizations, laboratories"></textarea></label><label>Active period<input id="profile-active-period" type="text" placeholder="Dates or career period"></label><label class="wide">Publications / terminology clues<textarea id="profile-publications" placeholder="Works, topics, recurring specialist terminology"></textarea></label><label class="wide">Useful URLs<textarea id="profile-urls" placeholder="One public URL per line"></textarea></label><label class="wide">Notes<textarea id="profile-notes" placeholder="Disambiguating clues or other context"></textarea></label></div><div class="section-title" style="margin:12px 0 5px">Custom fields</div><div class="custom-fields" id="custom-fields"></div><div class="custom-actions"><button type="button" id="add-custom-field">Add custom field</button></div><div class="editor-actions"><button type="button" class="research-card" id="research-card">Research with AI</button><button type="button" id="save-card">Save card</button><button type="button" id="cancel-card">Cancel</button></div><div class="research-status" id="research-status"></div><div class="research-sources" id="card-research-sources"></div></div></div></div><div class="reference-panel detail-only"><h3>Private reference corpus <span style="font-weight:400;color:#87939a">(optional)</span></h3><p class="hint">Upload several known samples for each candidate. Samples for the same person are combined for this run.</p><p class="hint" style="margin-top:-9px;color:#6b777a">Private files are not written to persistent storage, are not used as web-search queries, and are not shown as public citations; select them again for each run.</p><button type="button" class="sync-reference" id="sync-reference">Update author groups</button><div class="reference-groups" id="reference-groups"><div class="hint">Enter candidate names to create reference groups.</div></div></div></div>
+        <div class="detail-only"><label for="context-note">Context <span style="font-weight:400;color:#87939a">(optional)</span></label>
+        <input id="context-note" name="context_note" type="text" placeholder="e.g. academic papers, possibly translated, written under time pressure"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px"><div><label for="model-select">Model</label><select id="model-select"><option value="gpt-5.6-sol" selected>gpt-5.6-sol (default)</option><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-luna">gpt-5.6-luna</option><option value="gpt-5.5">gpt-5.5</option><option value="gpt-5">gpt-5</option><option value="gpt-5-mini">gpt-5-mini</option><option value="gpt-4.1">gpt-4.1</option></select></div><div><label for="reasoning-select">Reasoning strength</label><select id="reasoning-select"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh" selected>Extra high (default)</option></select></div></div>
+        <div class="control-panel detail-only"><h3>Ignore selected dimensions <span style="font-weight:400;color:#87939a">(optional)</span></h3><p>All are off by default. Checked dimensions will not influence the probability estimate.</p><div class="control-grid"><label><input type="checkbox" data-control="ignore_language"> Language habits</label><label><input type="checkbox" data-control="ignore_academic_domain"> Academic / domain terms</label><label><input type="checkbox" data-control="ignore_pdf_metadata"> PDF metadata</label><label><input type="checkbox" data-control="ignore_tex"> TeX source habits</label><label><input type="checkbox" data-control="ignore_public_background"> Public background</label></div></div>
+        <label for="text-input">Paste text <span style="font-weight:400;color:#87939a">(optional if uploading)</span></label>
+        <textarea id="text-input" name="text_input" placeholder="Paste the document you want to examine…"></textarea>
+        <label>Or upload document(s)</label>
+        <label class="drop" id="drop"><input id="file-input" type="file" name="files" accept=".pdf,.txt,.md,.markdown,.tex" multiple><strong>Drop files here or click to browse</strong><span>PDF, TXT, Markdown, and TeX · up to 10 MB each</span></label>
+        <div class="files" id="files"></div>
+        <div id="subject-document-panel"><label for="subject-file-input">Underlying document <span style="font-weight:400;color:#87939a">(optional for referee reports)</span></label><label class="drop" id="subject-drop"><input id="subject-file-input" type="file" name="subject_file" accept=".pdf,.txt,.md,.markdown,.tex"><strong>Drop the document here or click to browse</strong><span>Used for topic, citations, quotations, and reviewer-role consistency</span></label><div class="files" id="subject-file"></div><p class="hint">Its prose is never attributed to the referee. A verified byline can flag a candidate who authored the reviewed paper.</p></div>
+        <button class="secondary-action" id="submit" type="submit">Analyze automatically with Codex</button>
+        <div class="notice detail-only">This is a linguistic estimate, not proof of identity. Short, edited, translated, collaborative, or formulaic writing can make attribution unreliable.</div>
+      </form>
+      <section class="card result-pane" id="result"><div class="empty"><h2>Your analysis will appear here.</h2><p>Look for patterns across syntax, punctuation, vocabulary, function words, paragraph rhythm, and register—not just shared subject matter.</p></div></section>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#analysis-form');
+    const mode = document.querySelector('#mode');
+    const candidateField = document.querySelector('#candidate-field');
+    const textInput = document.querySelector('#text-input');
+    const contextNote = document.querySelector('#context-note');
+    const modelSelect = document.querySelector('#model-select');
+    const reasoningSelect = document.querySelector('#reasoning-select');
+    const controlInputs = [...document.querySelectorAll('[data-control]')];
+    const fileInput = document.querySelector('#file-input');
+    const filesEl = document.querySelector('#files');
+    const drop = document.querySelector('#drop');
+    const subjectFileInput = document.querySelector('#subject-file-input');
+    const subjectFileEl = document.querySelector('#subject-file');
+    const subjectDrop = document.querySelector('#subject-drop');
+    const subjectDocumentPanel = document.querySelector('#subject-document-panel');
+    const result = document.querySelector('#result');
+    const candidatesInput = document.querySelector('#candidates');
+    const referenceGroups = document.querySelector('#reference-groups');
+    const referenceFilesByAuthor = new Map();
+    const candidateProfiles = new Map();
+    const PROFILE_STORAGE_KEY = 'author-attribution-local-profiles-v1';
+    const cardManagerBody = document.querySelector('#card-manager-body');
+    const savedCardList = document.querySelector('#saved-card-list');
+    const cardEditor = document.querySelector('#card-editor');
+    let editingProfileId = null;
+    let editorSources = [];
+    let savedProfiles = loadSavedProfiles();
+    let thinkingTimer = null;
+    let selectedFiles = [];
+    let selectedSubjectFile = null;
+    let analysisReviewPasses = 3;
+    let thinkingStage = '';
+    let thinkingClues = [];
+
+    document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
+      const minimal = button.dataset.view === 'minimal';
+      document.body.classList.toggle('minimal-mode', minimal);
+      document.querySelectorAll('[data-view]').forEach(item => { const active = item === button; item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active)); });
+    }));
+    result.addEventListener('click', event => {
+      const cartoon = event.target.closest('.cartoon');
+      if (!cartoon) return;
+      cartoon.classList.remove('clicked'); void cartoon.offsetWidth; cartoon.classList.add('clicked');
+      cartoon.addEventListener('animationend', () => cartoon.classList.remove('clicked'), {once:true});
+    });
+
+    fetch('/api/provider').then(response => response.json()).then(status => {
+      if (status.default_model) { if (![...modelSelect.options].some(option => option.value === status.default_model)) modelSelect.add(new Option(status.default_model + ' (server default)', status.default_model)); modelSelect.value = status.default_model; }
+      if (status.default_reasoning_effort && [...reasoningSelect.options].some(option => option.value === status.default_reasoning_effort)) reasoningSelect.value = status.default_reasoning_effort;
+      if (Number(status.review_passes)) analysisReviewPasses = Number(status.review_passes);
+    }).catch(() => {});
+
+    document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(item => item.classList.remove('active'));
+      tab.classList.add('active'); mode.value = tab.dataset.mode;
+      const attribution = mode.value === 'attribution';
+      candidateField.style.display = attribution ? 'block' : 'none';
+      subjectDocumentPanel.style.display = attribution ? 'block' : 'none';
+      textInput.placeholder = mode.value === 'comparison' ? 'Optional: add one pasted document. You will still need at least one more uploaded document.' : 'Paste the document you want to examine…';
+      document.querySelector('#submit').textContent = mode.value === 'comparison' ? 'Compare automatically with Codex' : mode.value === 'discovery' ? 'Discover authors automatically with Codex' : 'Analyze automatically with Codex';
+    }));
+
+    function loadSavedProfiles() { try { const value = JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY) || '[]'); return Array.isArray(value) ? value.filter(item => item && item.id && item.name) : []; } catch (_) { return []; } }
+    function saveSavedProfiles() { try { localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(savedProfiles)); } catch (_) {} }
+    function candidateNames() { return candidatesInput.value.split(/[\n,;]+/).map(name => name.replace(/^\s*[-*•\d.)]+\s*/, '').trim()).filter((name, index, names) => name && names.indexOf(name) === index); }
+    function blankProfile(name = '') { return {id:'', name, aliases:'', nationality:'', education:'', languages:'', academic_field:'', affiliations:'', active_period:'', publications:'', urls:'', notes:'', custom_fields:[], sources:[]}; }
+    function profileFor(author) { if (candidateProfiles.has(author)) return candidateProfiles.get(author); const saved = savedProfiles.find(item => item.name === author); const profile = saved ? {...blankProfile(author), ...saved} : blankProfile(author); candidateProfiles.set(author, profile); return profile; }
+    function syncCandidateProfile(profile) { if (profile.name) candidateProfiles.set(profile.name, {...blankProfile(profile.name), ...profile}); }
+    function profileFieldChanged(input) { const author = input.dataset.profileAuthor; const profile = profileFor(author); profile[input.dataset.profileField] = input.value; candidateProfiles.set(author, profile); }
+    function renderCustomFields(fields = []) { document.querySelector('#custom-fields').innerHTML = (fields || []).map(item => `<div class="custom-row"><input type="text" placeholder="Field name" value="${escapeHtml(item.label || '')}" data-custom-label><input type="text" placeholder="Value" value="${escapeHtml(item.value || '')}" data-custom-value><button type="button" title="Remove custom field" data-remove-custom>×</button></div>`).join(''); }
+    function readEditorCard() { const value = id => document.querySelector(`#${id}`).value.trim(); return {id:editingProfileId || `${Date.now()}-${Math.random().toString(36).slice(2)}`, name:value('profile-name'), aliases:value('profile-aliases'), nationality:value('profile-nationality'), education:value('profile-education'), languages:value('profile-languages'), academic_field:value('profile-academic-field'), affiliations:value('profile-affiliations'), active_period:value('profile-active-period'), publications:value('profile-publications'), urls:value('profile-urls'), notes:value('profile-notes'), custom_fields:[...document.querySelectorAll('#custom-fields .custom-row')].map(row => ({label:row.querySelector('[data-custom-label]').value.trim(), value:row.querySelector('[data-custom-value]').value.trim()})).filter(item => item.label || item.value), sources:editorSources}; }
+    function fillEditor(card) { const profile = {...blankProfile(), ...card}; editorSources = profile.sources || []; const values = {name:profile.name, aliases:profile.aliases, nationality:profile.nationality, education:profile.education, languages:profile.languages, academic_field:profile.academic_field, affiliations:profile.affiliations, active_period:profile.active_period, publications:profile.publications, urls:profile.urls, notes:profile.notes}; Object.entries(values).forEach(([key, value]) => { const element = document.querySelector(`#profile-${key === 'name' ? 'name' : key.replace('_', '-')}`); if (element) element.value = value || ''; }); renderCustomFields(profile.custom_fields); document.querySelector('#card-research-sources').innerHTML = editorSources.map(source => `<div><a href="${escapeHtml(source.url || '#')}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title || source.url || 'Source')}</a> · ${escapeHtml(source.why_relevant || '')}</div>`).join(''); }
+    function renderCardManager() { savedCardList.innerHTML = savedProfiles.length ? savedProfiles.map((card, index) => `<div class="saved-card"><div><strong>${escapeHtml(card.name)}</strong><small>${escapeHtml(card.academic_field || card.nationality || 'No profile summary')}</small></div><div class="saved-card-actions"><button type="button" title="Move up" data-card-move="${index}" data-card-direction="-1">↑</button><button type="button" title="Move down" data-card-move="${index}" data-card-direction="1">↓</button><button type="button" title="Edit card" data-card-edit="${escapeHtml(card.id)}">Edit</button><button type="button" class="delete-card" title="Delete card" data-card-delete="${escapeHtml(card.id)}">Delete</button></div></div>`).join('') : '<div class="hint">No saved candidate cards yet.</div>'; }
+    function openCardEditor(id = null, seedName = '') { editingProfileId = id; const card = id ? savedProfiles.find(item => item.id === id) : blankProfile(seedName); document.querySelector('#card-editor-title').textContent = id ? 'Edit candidate card' : 'New candidate card'; fillEditor(card || blankProfile(seedName)); cardEditor.hidden = false; document.querySelector('#profile-name').focus(); }
+    function saveEditorCard() { const card = readEditorCard(); if (!card.name) { document.querySelector('#research-status').textContent = 'Enter a candidate name before saving the card.'; return; } const existingIndex = savedProfiles.findIndex(item => item.id === card.id); if (existingIndex >= 0) savedProfiles[existingIndex] = card; else savedProfiles.push(card); syncCandidateProfile(card); if (!candidateNames().includes(card.name)) candidatesInput.value = `${candidatesInput.value.trim()}${candidatesInput.value.trim() ? '\n' : ''}${card.name}`; saveSavedProfiles(); renderCardManager(); renderReferenceGroups(); cardEditor.hidden = true; editingProfileId = null; }
+    function applyResearchResult(research) { const current = readEditorCard(); const fields = ['aliases','nationality','education','languages','academic_field','affiliations','active_period','publications','urls','notes']; fields.forEach(field => { if (research[field]) current[field] = research[field]; }); current.custom_fields = [...(current.custom_fields || []), ...(research.custom_fields || [])].filter((item, index, items) => item.label && items.findIndex(other => other.label.toLowerCase() === item.label.toLowerCase()) === index); current.sources = research.sources || []; fillEditor(current); document.querySelector('#research-status').textContent = `Public research completed with ${research.confidence || 'unknown'} confidence. Review and save the card.`; }
+    function renderReferenceGroups() {
+      const names = candidateNames();
+      if (!names.length) { referenceGroups.innerHTML = '<div class="hint">Enter candidate names to create reference groups.</div>'; return; }
+      referenceGroups.innerHTML = names.map(author => { const profile = profileFor(author); const options = savedProfiles.filter(item => item.name === author).map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label || item.name)}</option>`).join(''); const authorFiles = referenceFilesByAuthor.get(author) || []; const fileList = authorFiles.map((file, index) => `<div class="reference-file"><span>${escapeHtml(file.name)}</span><button type="button" title="Remove file" aria-label="Remove ${escapeHtml(file.name)}" data-reference-remove-author="${escapeHtml(author)}" data-reference-remove-index="${index}">×</button></div>`).join(''); return `<div class="reference-group"><strong>${escapeHtml(author)} <span style="font-weight:400;color:#87939a">· local card</span></strong><div class="profile-grid"><input type="text" placeholder="Nationality" value="${escapeHtml(profile.nationality)}" data-profile-author="${escapeHtml(author)}" data-profile-field="nationality"><input type="text" placeholder="Languages" value="${escapeHtml(profile.languages)}" data-profile-author="${escapeHtml(author)}" data-profile-field="languages"><input type="text" placeholder="Education / institutions" value="${escapeHtml(profile.education)}" data-profile-author="${escapeHtml(author)}" data-profile-field="education"><textarea placeholder="Notes or disambiguating clues" data-profile-author="${escapeHtml(author)}" data-profile-field="notes">${escapeHtml(profile.notes)}</textarea></div><div class="profile-actions"><button type="button" data-save-profile="${escapeHtml(author)}">Save card</button><select data-load-profile="${escapeHtml(author)}"><option value="">Load saved card…</option>${options}</select></div><input type="file" accept=".pdf,.txt,.md,.markdown,.tex" multiple data-reference-author="${escapeHtml(author)}"><div class="reference-count" data-reference-count="${escapeHtml(author)}">${authorFiles.length} file${authorFiles.length === 1 ? '' : 's'} selected</div><div class="reference-files">${fileList}</div></div>`; }).join('');
+      referenceGroups.querySelectorAll('[data-profile-author]').forEach(input => input.addEventListener('input', () => profileFieldChanged(input)));
+      referenceGroups.querySelectorAll('input[data-reference-author]').forEach(input => input.addEventListener('change', () => { const author = input.dataset.referenceAuthor; const files = [...input.files]; referenceFilesByAuthor.set(author, files); renderReferenceGroups(); }));
+      referenceGroups.querySelectorAll('[data-save-profile]').forEach(button => button.addEventListener('click', () => { const author = button.dataset.saveProfile; const profile = {...blankProfile(author), ...profileFor(author), name:author}; const existing = savedProfiles.find(item => item.id === profile.id) || savedProfiles.find(item => item.name === author); profile.id = existing?.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`; const index = savedProfiles.findIndex(item => item.id === profile.id); if (index >= 0) savedProfiles[index] = profile; else savedProfiles.push(profile); candidateProfiles.set(author, profile); saveSavedProfiles(); renderCardManager(); renderReferenceGroups(); }));
+      referenceGroups.querySelectorAll('[data-load-profile]').forEach(select => select.addEventListener('change', () => { const card = savedProfiles.find(item => item.id === select.value); if (!card) return; candidateProfiles.set(card.name, {nationality:card.nationality || '', education:card.education || '', languages:card.languages || '', notes:card.notes || '', savedId:card.id}); renderReferenceGroups(); }));
+    }
+    document.querySelector('#sync-reference').addEventListener('click', renderReferenceGroups);
+    referenceGroups.addEventListener('click', event => { const button = event.target.closest('[data-reference-remove-author]'); if (!button) return; const author = button.dataset.referenceRemoveAuthor; const files = referenceFilesByAuthor.get(author) || []; files.splice(Number(button.dataset.referenceRemoveIndex), 1); referenceFilesByAuthor.set(author, files); renderReferenceGroups(); });
+    renderReferenceGroups();
+    renderCardManager();
+    document.querySelector('#toggle-card-manager').addEventListener('click', () => { cardManagerBody.hidden = !cardManagerBody.hidden; if (!cardManagerBody.hidden) renderCardManager(); });
+    document.querySelector('#new-card').addEventListener('click', () => openCardEditor(null, candidateNames().find(name => !savedProfiles.some(card => card.name === name)) || ''));
+    document.querySelector('#sort-cards').addEventListener('click', () => { savedProfiles.sort((a, b) => a.name.localeCompare(b.name)); saveSavedProfiles(); renderCardManager(); });
+    savedCardList.addEventListener('click', event => { const edit = event.target.closest('[data-card-edit]'); if (edit) { openCardEditor(edit.dataset.cardEdit); return; } const remove = event.target.closest('[data-card-delete]'); if (remove) { const card = savedProfiles.find(item => item.id === remove.dataset.cardDelete); if (card && window.confirm(`Delete the local card for ${card.name}?`)) { savedProfiles = savedProfiles.filter(item => item.id !== card.id); if (candidateProfiles.get(card.name)?.id === card.id) candidateProfiles.delete(card.name); saveSavedProfiles(); renderCardManager(); renderReferenceGroups(); } return; } const move = event.target.closest('[data-card-move]'); if (move) { const index = Number(move.dataset.cardMove); const target = index + Number(move.dataset.cardDirection); if (target >= 0 && target < savedProfiles.length) { [savedProfiles[index], savedProfiles[target]] = [savedProfiles[target], savedProfiles[index]]; saveSavedProfiles(); renderCardManager(); } } });
+    document.querySelector('#cancel-card').addEventListener('click', () => { cardEditor.hidden = true; editingProfileId = null; });
+    document.querySelector('#save-card').addEventListener('click', saveEditorCard);
+    document.querySelector('#add-custom-field').addEventListener('click', () => { const rows = [...document.querySelectorAll('#custom-fields .custom-row')].map(row => ({label:row.querySelector('[data-custom-label]').value, value:row.querySelector('[data-custom-value]').value})); rows.push({label:'', value:''}); renderCustomFields(rows); document.querySelector('#custom-fields .custom-row:last-child [data-custom-label]').focus(); });
+    document.querySelector('#custom-fields').addEventListener('click', event => { if (!event.target.closest('[data-remove-custom]')) return; event.target.closest('.custom-row').remove(); });
+    document.querySelector('#research-card').addEventListener('click', async event => { const card = readEditorCard(); if (!card.name) { document.querySelector('#research-status').textContent = 'Enter a candidate name before starting research.'; return; } const button = event.currentTarget; button.disabled = true; document.querySelector('#research-status').textContent = 'Searching public sources and checking identity clues…'; const data = new FormData(); data.append('candidate_name', card.name); data.append('existing_profile', JSON.stringify(card)); data.append('model', modelSelect.value); data.append('reasoning_effort', reasoningSelect.value); try { const payload = await requestJson('/api/research-candidate', {method:'POST', body:data}); applyResearchResult(payload); } catch (error) { document.querySelector('#research-status').textContent = error.message; } finally { button.disabled = false; } });
+
+    function showFiles() { filesEl.innerHTML = selectedFiles.map((file, index) => `<span class="file"><span>${escapeHtml(file.name)}</span><button type="button" title="Remove file" aria-label="Remove ${escapeHtml(file.name)}" data-file-remove-index="${index}">×</button></span>`).join(''); }
+    function showSubjectFile() { subjectFileEl.innerHTML = selectedSubjectFile ? `<span class="file"><span>${escapeHtml(selectedSubjectFile.name)}</span><button type="button" title="Remove underlying document" aria-label="Remove ${escapeHtml(selectedSubjectFile.name)}" data-subject-file-remove>×</button></span>` : ''; }
+    function escapeHtml(value) { return String(value ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+    async function requestJson(url, options) {
+      let response;
+      try { response = await fetch(url, options); } catch (error) {
+        throw new Error('The local analysis server is not running or the page is not open from http://127.0.0.1:8000. Start the app server, open that address, and try again. Browser detail: ' + (error.message || 'network request failed'));
+      }
+      const body = await response.text();
+      let payload;
+      try { payload = body ? JSON.parse(body) : {}; } catch (_) { throw new Error(`The analysis server returned an invalid response (HTTP ${response.status}). Restart the app server and try again.`); }
+      if (!response.ok) throw new Error(payload.detail || `The analysis server returned HTTP ${response.status}.`);
+      return payload;
+    }
+    fileInput.addEventListener('change', () => { selectedFiles = [...fileInput.files]; showFiles(); });
+    subjectFileInput.addEventListener('change', () => { selectedSubjectFile = subjectFileInput.files[0] || null; showSubjectFile(); });
+    filesEl.addEventListener('click', event => { const button = event.target.closest('[data-file-remove-index]'); if (!button) return; selectedFiles.splice(Number(button.dataset.fileRemoveIndex), 1); if (!selectedFiles.length) fileInput.value = ''; showFiles(); });
+    subjectFileEl.addEventListener('click', event => { if (!event.target.closest('[data-subject-file-remove]')) return; selectedSubjectFile = null; subjectFileInput.value = ''; showSubjectFile(); });
+    ['dragenter','dragover'].forEach(event => drop.addEventListener(event, e => { e.preventDefault(); drop.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(event => drop.addEventListener(event, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+    drop.addEventListener('drop', e => { selectedFiles = [...e.dataTransfer.files]; showFiles(); });
+    ['dragenter','dragover'].forEach(event => subjectDrop.addEventListener(event, e => { e.preventDefault(); subjectDrop.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(event => subjectDrop.addEventListener(event, e => { e.preventDefault(); subjectDrop.classList.remove('drag'); }));
+    subjectDrop.addEventListener('drop', e => { selectedSubjectFile = [...e.dataTransfer.files][0] || null; showSubjectFile(); });
+    function renderThinkingClues() {
+      const list = document.querySelector('#thinking-clues-list'); if (!list) return;
+      list.innerHTML = thinkingClues.length ? thinkingClues.map(clue => `<li>${escapeHtml(clue)}</li>`).join('') : '<li>Preparing the evidence ledger.</li>';
+    }
+    function initialThinkingClues() {
+      const names = candidateNames(); const clues = [];
+      if (mode.value === 'attribution' && names.length) clues.push(`Candidate labels received: ${names.join(' · ')}`);
+      if (mode.value === 'attribution' && !names.length) clues.push('No candidate list supplied; AI will discover a public-author shortlist first.');
+      if (mode.value === 'comparison') clues.push(`Comparing ${selectedFiles.length + (textInput.value.trim() ? 1 : 0)} supplied document(s).`);
+      if (selectedFiles.length) clues.push(`${selectedFiles.length} uploaded file(s) queued for extraction.`);
+      if (selectedSubjectFile) clues.push(`Underlying document supplied as referee-report context: ${selectedSubjectFile.name}.`);
+      if (textInput.value.trim()) clues.push('Pasted report text is included in the comparison.');
+      const profiles = mode.value === 'attribution' ? names.map(name => { const profile = profileFor(name); const details = [profile.nationality, profile.languages, profile.academic_field].filter(Boolean).join(' · '); return details ? `${name}: ${details}` : ''; }).filter(Boolean) : [];
+      return clues.concat(profiles.map(item => `Candidate information: ${item}`));
+    }
+    function updateThinkingClues(clues) {
+      for (const clue of clues || []) { const normalized = String(clue).trim(); if (normalized && !thinkingClues.includes(normalized)) thinkingClues.push(normalized); }
+      renderThinkingClues();
+    }
+    function updateWorkflow(active) {
+      document.querySelectorAll('.thinking-step').forEach((step, index) => {
+        step.classList.toggle('active', index === active); step.classList.toggle('done', index < active);
+        const mark = step.querySelector('.step-mark'); if (mark) mark.textContent = index < active ? '✓' : index === active ? '●' : '○';
+      });
+    }
+    function updateThinkingStatus(stage, clues = []) {
+      thinkingStage = stage || thinkingStage;
+      const status = document.querySelector('#thinking-status');
+      if (status && stage) status.textContent = `${stage}…`;
+      updateThinkingClues(clues);
+      const normalized = String(stage || '').toLowerCase();
+      const autoDiscovery = mode.value === 'attribution' && !candidateNames().length;
+      const finalIndex = document.querySelectorAll('.thinking-step').length - 1;
+      let active = normalized.includes('final') ? finalIndex : normalized.includes('targeted') || normalized.includes('focused') ? (autoDiscovery ? 6 : 5) : normalized.includes('discover') || normalized.includes('shortlist') ? 0 : normalized.includes('independent') ? (autoDiscovery ? 5 : 4) : normalized.includes('role') || normalized.includes('stylometr') ? (autoDiscovery ? 3 : 2) : normalized.includes('collect') || normalized.includes('corpus') ? (autoDiscovery ? 2 : 1) : normalized.includes('extract') || normalized.includes('feature') || normalized.includes('prepar') ? (autoDiscovery ? 1 : 0) : normalized.includes('background') || normalized.includes('search') ? (autoDiscovery ? 4 : 3) : null;
+      if (active === null) return;
+      updateWorkflow(active);
+    }
+    async function runAnalysisInBackground(data) {
+      const started = await requestJson('/api/analyze/start', {method:'POST', body:data});
+      let delay = 900;
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        const status = await requestJson(`/api/analyze/status/${encodeURIComponent(started.job_id)}`);
+        updateThinkingStatus(status.stage, status.clues || []);
+        if (status.status === 'completed') return status.result;
+        if (status.status === 'error') throw new Error(status.detail || 'The analysis failed.');
+        delay = Math.min(3500, delay + 350);
+      }
+    }
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const button = document.querySelector('#submit'); button.disabled = true; button.textContent = 'Analyzing…';
+      showThinking(mode.value === 'comparison' ? 'Comparing the document set…' : mode.value === 'discovery' ? 'Discovering possible authors…' : candidateNames().length ? 'Researching the candidate authors…' : 'Discovering possible authors, then researching them…');
+      const data = makeFormData();
+      try {
+        const payload = await runAnalysisInBackground(data);
+        stopThinking();
+        result.innerHTML = renderResult(payload);
+        bindResultActions(payload);
+      } catch (error) { stopThinking(); result.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`; }
+      finally { stopThinking(); button.disabled = false; button.textContent = mode.value === 'comparison' ? 'Compare automatically with Codex' : mode.value === 'discovery' ? 'Discover authors automatically with Codex' : 'Analyze automatically with Codex'; }
+    });
+
+    function makeFormData() { const data = new FormData(); data.append('mode', mode.value); data.append('candidates', candidatesInput.value); data.append('context_note', contextNote.value); data.append('model', modelSelect.value); data.append('reasoning_effort', reasoningSelect.value); const controls = {}; controlInputs.forEach(input => { controls[input.dataset.control] = input.checked; }); data.append('analysis_controls', JSON.stringify(controls)); data.append('text_input', textInput.value); const profilePayload = {}; candidateNames().forEach(author => { const profile = profileFor(author); profilePayload[author] = {aliases:profile.aliases || '', nationality:profile.nationality || '', education:profile.education || '', languages:profile.languages || '', academic_field:profile.academic_field || '', affiliations:profile.affiliations || '', active_period:profile.active_period || '', publications:profile.publications || '', urls:profile.urls || '', notes:profile.notes || '', custom_fields:profile.custom_fields || [], sources:profile.sources || []}; }); data.append('candidate_context', JSON.stringify(mode.value === 'attribution' ? profilePayload : {})); selectedFiles.forEach(file => data.append('files', file)); if (mode.value === 'attribution' && selectedSubjectFile) data.append('subject_file', selectedSubjectFile); const manifest = []; if (mode.value === 'attribution') candidateNames().forEach(author => (referenceFilesByAuthor.get(author) || []).forEach(file => { manifest.push({author, name:file.name}); data.append('reference_files', file); })); data.append('reference_manifest', JSON.stringify(manifest)); return data; }
+    function thinkingFacts() {
+      const names = candidateNames();
+      const candidateText = mode.value === 'discovery' ? 'Open-ended public author search' : mode.value === 'comparison' ? `${selectedFiles.length + (textInput.value.trim() ? 1 : 0)} document(s) to compare` : names.length ? names.map(escapeHtml).join(' · ') : 'AI will discover likely public authors first';
+      const profileText = mode.value !== 'attribution' ? 'No candidate card required' : names.map(name => { const profile = profileFor(name); const details = [profile.nationality, profile.languages, profile.academic_field].filter(Boolean).join(' · '); return `${escapeHtml(name)}${details ? `: ${escapeHtml(details)}` : ': no saved background yet'}`; }).join('<br>') || 'AI will build a public background shortlist';
+      const inputText = `${selectedFiles.length} uploaded file(s)${textInput.value.trim() ? ' · pasted text included' : ''}${selectedSubjectFile ? ' · underlying referee document included' : ''}`;
+      return `<div class="thinking-facts"><div class="thinking-fact"><strong>Candidate set</strong><span>${candidateText}</span></div><div class="thinking-fact"><strong>Known candidate information</strong><span>${profileText}</span></div><div class="thinking-fact"><strong>Input coverage</strong><span>${inputText}</span></div><div class="thinking-fact"><strong>Signals being checked</strong><span>Language profile · academic terminology · document provenance · identity clues</span></div></div>`;
+    }
+    function showThinking(title) { stopThinking(); thinkingStage = 'Preparing analysis'; thinkingClues = initialThinkingClues(); const autoDiscovery = mode.value === 'attribution' && !candidateNames().length; const stages = autoDiscovery ? ['Discover possible authors','Extract language and domain signals','Collect reusable solo-author sources','Cross-check reviewer role and stylometry','Review public candidate background','Run independent evidence review','Target close candidates','Resolve same-name identity conflicts','Perform final adjudication'] : mode.value === 'attribution' ? ['Extract language and domain signals','Collect reusable solo-author sources','Cross-check reviewer role and stylometry','Review public candidate background','Run independent evidence review','Target close candidates','Resolve same-name identity conflicts','Perform final adjudication'] : mode.value === 'discovery' ? ['Extract language and domain signals','Search for possible public authors','Run independent discovery review','Check alternative authors and identities','Verify solo-authored sources','Check background and terminology','Perform final adjudication'] : ['Read the document set','Extract stable writing features','Run independent comparison review','Check disconfirming pairwise evidence','Review genre and editing effects','Verify public provenance','Perform final adjudication']; result.innerHTML = `<div class="thinking"><div class="cartoon-stage"><span class="spark one">✦</span><span class="spark two">✧</span><span class="spark three">✦</span><div class="cartoon"><div class="ear left"></div><div class="ear right"></div><div class="head"><div class="eye left"></div><div class="eye right"></div><div class="beak"></div></div><div class="scarf"></div><div class="magnifier"></div></div></div><h2>${escapeHtml(title)}</h2><p id="thinking-status" class="thinking-current">${stages[0]}…</p>${thinkingFacts()}<div class="thinking-clues"><h3>Clues so far</h3><ul id="thinking-clues-list"></ul></div><div class="thinking-steps">${stages.map((stage, index) => `<div class="thinking-step${index === 0 ? ' active' : ''}"><span class="step-mark">${index === 0 ? '●' : '○'}</span><span>${stage}</span></div>`).join('')}</div></div>`; renderThinkingClues(); }
+    function stopThinking() { if (thinkingTimer) { clearInterval(thinkingTimer); thinkingTimer = null; } }
+
+    function pct(value) { return `${Math.round(value * 100)}%`; }
+    function formatDuration(value) { const seconds = Math.max(0, Math.round(Number(value) || 0)); const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); const remainder = seconds % 60; if (hours) return `${hours}h ${minutes}m ${remainder}s`; if (minutes) return `${minutes}m ${remainder}s`; return `${remainder}s`; }
+    function resultTools() { return `<div class="result-actions"><button type="button" data-action="copy">Copy JSON</button><button type="button" data-action="download">Download JSON</button><button type="button" data-action="download-report">Download report</button></div>`; }
+    function providerLabel(data) { return data.provider === 'chatgpt-subscription-codex' ? 'ChatGPT subscription · Codex' : data.provider === 'openai-api' ? 'OpenAI API' : 'Manual'; }
+    function renderAttribution(data) { return `${resultTools()}<div class="result-head"><h2>Authorship estimate</h2><span class="badge">${escapeHtml(data.confidence)} confidence</span></div><p class="summary">${escapeHtml(data.summary)}</p><div>${data.candidate_evaluations.map(item => `<div class="candidate"><div class="candidate-line"><strong>${escapeHtml(item.candidate)}</strong><span class="prob">${pct(item.probability)}</span></div><div class="bar"><div class="fill" style="width:${item.probability * 100}%"></div></div><p class="explanation">${escapeHtml(item.explanation)}</p><p class="explanation"><strong>Reference corpus:</strong> ${escapeHtml(item.reference_corpus_summary || '')}</p></div>`).join('')}</div>${listBlock('Evidence considered', data.evidence)}${listBlock('Limitations', data.limitations)}${privateCorpusMeta(data.reference_corpus, data.private_corpus_note)}${researchSources(data.research_sources, 'Public research sources')}${documentMeta(data.documents)}<p class="hint" style="margin-top:17px">${providerLabel(data)} · ${escapeHtml(data.model || '')}<br>${escapeHtml(data.analysis_note || '')}</p>`; }
+    function renderComparison(data) { return `${resultTools()}<div class="result-head"><h2>Common-authorship estimate</h2><span class="badge">${escapeHtml(data.confidence)} confidence</span></div><div class="candidate-line"><strong>All documents by one author</strong><span class="prob">${pct(data.overall_same_author_probability)}</span></div><div class="bar"><div class="fill" style="width:${data.overall_same_author_probability * 100}%"></div></div><p class="summary" style="margin-top:16px">${escapeHtml(data.summary)}</p><div class="section-title">Pairwise comparisons</div>${data.pairwise.map(item => `<div class="pair"><div class="pair-top"><span>${escapeHtml(item.document_a)} ↔ ${escapeHtml(item.document_b)}</span><span class="prob">${pct(item.same_author_probability)}</span></div><p class="explanation">${escapeHtml(item.explanation)}</p></div>`).join('')}${listBlock('Shared signals', data.shared_signals)}${listBlock('Limitations', data.limitations)}${researchSources(data.research_sources, 'Research sources')}${documentMeta(data.documents)}<p class="hint" style="margin-top:17px">${providerLabel(data)} · ${escapeHtml(data.model || '')}<br>${escapeHtml(data.analysis_note || '')}</p>`; }
+    function renderPrepared(data) { return `<div class="result-head"><h2>ChatGPT subscription handoff</h2><span class="badge">No API key</span></div><p class="summary">Copy this prompt into ChatGPT, ask it to return the JSON only, then paste the response below. The app will normalize and render the result.</p><label for="prepared-prompt">Prompt for ChatGPT</label><textarea id="prepared-prompt" class="manual-prompt" readonly>${escapeHtml(data.prompt)}</textarea><button type="button" class="secondary-action" data-action="copy-prompt">Copy prompt</button><label for="manual-response">Paste ChatGPT’s JSON response</label><textarea id="manual-response" class="manual-response" placeholder="{&quot;summary&quot;: ..., &quot;candidate_evaluations&quot;: [...]}" ></textarea><button type="button" class="primary" data-action="render-manual">Render analysis</button><p class="hint" style="margin-top:14px">${escapeHtml(data.analysis_note)}</p>`; }
+    function documentMeta(documents) { if (!documents || !documents.length) return ''; return `<div class="section-title">Sample quality</div><div class="meta-grid">${documents.map(doc => { const pdfMeta = doc.pdf_metadata ? `<br><span>PDF metadata: ${escapeHtml(Object.entries(doc.pdf_metadata).map(([key,value]) => `${key}=${value}`).join(' · '))}</span>` : ''; return `<div class="meta"><strong>${escapeHtml(doc.name)}</strong>${escapeHtml(doc.format || 'text')} · ${doc.words.toLocaleString()} words · ${doc.characters.toLocaleString()} characters<br>${escapeHtml(doc.quality)}${doc.truncated ? ' · input truncated' : ''}<br>${escapeHtml(doc.quality_note)}${pdfMeta}</div>`; }).join('')}</div>`; }
+    function underlyingDocumentMeta(document) { if (!document) return ''; const pdfMeta = document.pdf_metadata ? `<br><span>PDF metadata: ${escapeHtml(Object.entries(document.pdf_metadata).map(([key,value]) => `${key}=${value}`).join(' · '))}</span>` : ''; return `<div class="section-title">Underlying document context</div><div class="meta"><strong>${escapeHtml(document.name)}</strong>${escapeHtml(document.format || 'text')} · ${document.words.toLocaleString()} words · ${document.characters.toLocaleString()} characters<br>${escapeHtml(document.quality)}${document.truncated ? ' · input truncated' : ''}<br>Used for subject context and reviewer-role consistency, never as referee-style evidence.${pdfMeta}</div>`; }
+    function privateCorpusMeta(corpus, note) { if (!corpus || !Object.keys(corpus).length) return ''; return `<div class="section-title">Private reference corpus</div><div class="meta-grid">${Object.entries(corpus).map(([author, info]) => `<div class="meta"><strong>${escapeHtml(author)}</strong>${info.files} files · ${info.characters.toLocaleString()} characters<br>${info.truncated_files ? `${info.truncated_files} file(s) truncated` : 'No reference file truncation'}<br>Used only for this analysis</div>`).join('')}</div><p class="hint" style="margin-top:8px">${escapeHtml(note || '')}</p>`; }
+    function publicCorpusMeta(corpus) { if (!corpus || !corpus.enabled) return ''; const candidates = corpus.candidates || {}; return '<div class="section-title">Reusable public solo-work corpus</div><div class="meta-grid">' + Object.entries(candidates).map(([author, info]) => '<div class="meta"><strong>' + escapeHtml(author) + '</strong>' + Number(info.full_text_samples || 0) + ' full-text v1 samples · ' + Number(info.pre_2026_solo_metadata_matches || 0) + ' pre-2026 solo records<br>' + (Number(info.cached_full_text_samples || 0) ? Number(info.cached_full_text_samples) + ' sample(s) loaded from local cache' : 'Fresh public retrieval') + (info.paper_errors && info.paper_errors.length ? '<br>' + escapeHtml(info.paper_errors.length + ' public file(s) unavailable') : '') + '</div>').join('') + '</div><p class="hint" style="margin-top:8px">Exact-name sole-author arXiv records only. Same-name identity is still checked separately. Thank you to arXiv for use of its open access interoperability.</p>'; }
+    function listBlock(title, items) { if (!items || !items.length) return ''; return `<div class="section-title">${title}</div><ul>${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`; }
+    function researchSources(sources, title) { if (!sources || !sources.length) return ''; return `<div class="section-title">${title}</div><div>${sources.map(source => { const href = /^https?:\/\//i.test(source.url || '') ? source.url : '#'; const owner = source.candidate || source.document || ''; const basis = source.solo_authorship_basis || ''; return `<div class="source"><strong>${escapeHtml(owner)}</strong> · <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title || source.url || 'Source')}</a><br>${escapeHtml(source.why_relevant || '')}${basis ? `<br><span class="explanation">Solo-authorship basis: ${escapeHtml(basis)}</span>` : ''}</div>`; }).join('')}</div>`; }
+    function bindResultActions(data) {
+      result.querySelector('[data-action="copy"]').addEventListener('click', async event => { await navigator.clipboard.writeText(JSON.stringify(data, null, 2)); event.currentTarget.textContent = 'Copied'; setTimeout(() => event.currentTarget.textContent = 'Copy JSON', 1400); });
+      result.querySelector('[data-action="download"]').addEventListener('click', () => { const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `author-analysis-${new Date().toISOString().slice(0,10)}.json`; link.click(); URL.revokeObjectURL(url); });
+      result.querySelector('[data-action="download-report"]').addEventListener('click', event => {
+        const report = result.cloneNode(true);
+        report.querySelectorAll('.result-actions').forEach(node => node.remove());
+        report.querySelectorAll('details').forEach(node => { node.open = true; });
+        const title = data.mode === 'discovery' ? 'Possible authors' : data.mode === 'comparison' ? 'Common-authorship estimate' : 'Authorship estimate';
+        const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · FindReferee</title><style>body{margin:0;padding:32px;color:#17212b;background:#fbfcfa;font-family:Arial,Helvetica,sans-serif;line-height:1.5}main{max-width:860px;margin:0 auto}.report-meta{color:#64717d;font-size:12px;border-bottom:1px solid #dce5e9;padding-bottom:12px;margin-bottom:20px}.card{background:#fff;border:1px solid #dce5e9;border-radius:14px;padding:22px}.candidate{margin:14px 0}.candidate-line{display:flex;justify-content:space-between;gap:12px;font-size:14px;margin-bottom:6px}.prob{color:#09574f;font-weight:800}.bar{height:9px;background:#e9eeee;border-radius:99px;overflow:hidden}.fill{height:100%;background:#0e766e;border-radius:99px}.summary{color:#40515a;font-size:14px}.explanation,.hint{color:#64717d;font-size:12px}.section-title{color:#738188;text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:800;margin:23px 0 10px}.probability-chart{display:flex;align-items:flex-end;gap:10px;min-height:210px;margin:12px 0 22px;padding:14px 8px 0;border-bottom:1px solid #dce5e9;overflow-x:auto}.chart-column{min-width:58px;flex:1 1 0;max-width:110px;height:190px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:5px}.chart-value{color:#09574f;font-size:11px;font-weight:800}.chart-bar-track{width:100%;height:145px;display:flex;align-items:flex-end;justify-content:center;background:#f7fbfa;border-radius:8px 8px 0 0}.chart-bar{width:54px;min-height:3px;background:#0e766e;border-radius:7px 7px 0 0}.chart-label{width:100%;color:#52616a;font-size:10px;line-height:1.2;text-align:center;overflow-wrap:anywhere}.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}.meta{background:#f5f8f7;border-radius:10px;padding:10px;font-size:11px;color:#64717d}.meta strong{display:block;color:#3b5054;font-size:12px}details{border-top:1px solid #dce5e9;padding-top:12px;margin-top:18px}summary{cursor:pointer;color:#09574f;font-weight:800;font-size:13px}</style></head><body><main><h1>${escapeHtml(title)}</h1><div class="report-meta">FindReferee report · ${escapeHtml(new Date().toLocaleString())}</div><div class="card">${report.innerHTML}</div></main></body></html>`;
+        const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+        const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `author-report-${new Date().toISOString().slice(0,10)}.html`; link.click(); URL.revokeObjectURL(url); event.currentTarget.textContent = 'Report downloaded'; setTimeout(() => event.currentTarget.textContent = 'Download report', 1600);
+      });
+    }
+    function bindPreparedActions(data) {
+      result.querySelector('[data-action="copy-prompt"]').addEventListener('click', async event => { await navigator.clipboard.writeText(data.prompt); event.currentTarget.textContent = 'Prompt copied'; setTimeout(() => event.currentTarget.textContent = 'Copy prompt', 1400); });
+      result.querySelector('[data-action="render-manual"]').addEventListener('click', () => {
+        try {
+          const parsed = parseManualJson(result.querySelector('#manual-response').value);
+          if (!parsed || typeof parsed !== 'object') throw new Error('The response must be a JSON object.');
+          parsed.mode = data.mode; parsed.documents = data.documents; parsed.model = 'ChatGPT subscription (manual)'; parsed.analysis_note = data.analysis_note;
+          if (data.mode === 'attribution') {
+            const names = document.querySelector('#candidates').value.split(/[\n,;]+/).map(name => name.trim()).filter(Boolean);
+            parsed.candidate_evaluations = normalizeManualAttribution(parsed.candidate_evaluations, names);
+            result.innerHTML = renderResult(parsed);
+          } else {
+            if (!Array.isArray(parsed.pairwise)) throw new Error('The JSON is missing the pairwise comparisons.');
+            result.innerHTML = renderResult(parsed);
+          }
+          bindResultActions(parsed);
+        } catch (error) { result.querySelector('#manual-response').insertAdjacentHTML('afterend', `<div class="error" style="margin-top:10px">${escapeHtml(error.message)}</div>`); }
+      });
+    }
+    function normalizeManualAttribution(items, names) { const byName = new Map((Array.isArray(items) ? items : []).map(item => [item.candidate, item])); const normalized = names.map(name => ({candidate:name, probability:Math.max(0, Number(byName.get(name)?.probability || 0)), explanation:byName.get(name)?.explanation || 'No separate explanation was returned.'})); const total = normalized.reduce((sum, item) => sum + item.probability, 0) || normalized.length || 1; normalized.forEach(item => item.probability /= total); return normalized.sort((a,b) => b.probability-a.probability); }
+    function parseManualJson(raw) { const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''); return JSON.parse(cleaned); }
+  </script>
+<script>
+    function languageProfile(profile) {
+      if (!profile) return '';
+      const hypotheses = (profile.likely_first_language_hypotheses || []).map(item => '<div class="hypothesis"><strong>' + escapeHtml(item.language) + ' · ' + pct(Number(item.relative_probability || 0)) + '</strong><br>' + escapeHtml(item.evidence || '') + '<br><span class="explanation">Alternative explanations: ' + escapeHtml(item.alternative_explanations || '') + '</span></div>').join('');
+      const issues = (profile.grammar_issues || []).map(item => '<div class="issue"><strong>' + escapeHtml(item.issue || '') + '</strong> · ' + escapeHtml(item.confidence || '') + '<br>Example: ' + escapeHtml(item.example || '') + '<br>Suggested form: ' + escapeHtml(item.suggested_form || '') + '</div>').join('');
+      return '<div class="language-profile"><h3>Language profile first</h3><p><strong>Primary language:</strong> ' + escapeHtml(profile.primary_language || 'Unknown') + ' · ' + escapeHtml(profile.language_profile_confidence || '') + ' confidence</p>' + (hypotheses ? '<div class="section-title">Possible first-language hypotheses</div>' + hypotheses : '') + (issues ? '<div class="section-title">Grammar and usage issues</div>' + issues : '') + listBlock('Lexical preferences', profile.lexical_preferences) + listBlock('Syntax preferences', profile.syntax_preferences) + listBlock('Academic and domain signals', profile.academic_and_domain_signals) + (profile.punctuation_and_formatting ? '<p><strong>Punctuation and formatting:</strong> ' + escapeHtml(profile.punctuation_and_formatting) + '</p>' : '') + (profile.register_and_rhetoric ? '<p><strong>Register and rhetoric:</strong> ' + escapeHtml(profile.register_and_rhetoric) + '</p>' : '') + listBlock('Language-profile caveats', profile.caveats) + '</div>';
+    }
+    function ambiguityBlock(ambiguity) {
+      if (!ambiguity || !ambiguity.is_ambiguous) return '';
+      return '<div class="ambiguity"><h3>Help needed to distinguish same-name authors</h3><p>' + escapeHtml(ambiguity.message || 'Several identities remain plausible.') + '</p>' + listBlock('Possible identities', ambiguity.possible_identities) + listBlock('Questions for you', ambiguity.questions_for_user) + '</div>';
+    }
+    function candidateBackground(item) { return item.public_background ? '<p class="explanation"><strong>Public background:</strong> ' + escapeHtml(item.public_background) + '</p>' : ''; }
+    function evidenceBreakdown(item) { const values = item.evidence_breakdown || {}; const labels = {language:'Language', error_patterns:'Error fingerprint', syntax:'Syntax', lexicon:'Lexicon', punctuation:'Punctuation', domain:'Domain', historical_prose:'Pre-2026 prose reliability', english_fluency:'English fluency', academic_fit:'Academic fit', reviewer_role_fit:'Reviewer-role fit', reference_corpus:'Private corpus', public_background:'Public background', counterevidence:'Counterevidence'}; const entries = Object.entries(labels).filter(([key]) => values[key] !== undefined); if (!entries.length) return ''; return '<p class="explanation"><strong>Evidence dimensions:</strong> ' + entries.map(([key, label]) => `${escapeHtml(label)} ${pct(Number(values[key] || 0))}`).join(' · ') + '</p>'; }
+    function candidateEvidenceDetails(item) { const coverage = item.public_work_coverage || {}; const coverageText = `${Number(coverage.works_considered || 0)} works · ${Number(coverage.solo_works_considered || 0)} solo · ${Number(coverage.pre_2026_works || 0)} pre-2026`; return '<p class="explanation"><strong>Academic background fit:</strong> ' + escapeHtml(item.academic_background_fit || 'Not reported.') + '</p><p class="explanation"><strong>English fluency from solo papers:</strong> ' + escapeHtml(item.english_fluency_assessment || 'Not reported.') + '</p><p class="explanation"><strong>Public-work coverage:</strong> ' + escapeHtml(coverageText) + (coverage.post_2025_works ? ` · ${Number(coverage.post_2025_works)} 2026+` : '') + '<br>' + escapeHtml(coverage.coverage_note || '') + '</p>'; }
+    function probabilityChart(data) { const entries = (data.candidate_evaluations || []).map(item => ({label:item.candidate, value:Number(item.probability || 0), noMatch:false})); const noMatch = Number(data.no_listed_candidate_probability || 0); if (noMatch > 0) entries.push({label:'No listed candidate', value:noMatch, noMatch:true}); if (!entries.length) return ''; return '<div class="section-title">Probability chart</div><div class="probability-chart">' + entries.map(item => '<div class="chart-column' + (item.noMatch ? ' no-match' : '') + '"><div class="chart-value">' + pct(item.value) + '</div><div class="chart-bar-track"><div class="chart-bar" style="height:' + Math.max(2, item.value * 100) + '%"></div></div><div class="chart-label">' + escapeHtml(item.label) + '</div></div>').join('') + '</div>'; }
+    function noListedCandidate(data) { const value = Number(data.no_listed_candidate_probability || 0); return '<div class="candidate"><div class="candidate-line"><strong>No listed candidate</strong><span class="prob">' + pct(value) + '</span></div><div class="bar"><div class="fill" style="width:' + value * 100 + '%"></div></div><p class="explanation">Probability that the report was written by someone outside the supplied candidate list.</p></div>'; }
+    function noMatchAlert(data) { const value = Number(data.no_listed_candidate_probability || 0); return value >= .3 ? '<div class="ambiguity"><h3>Candidate list may be incomplete</h3><p>The estimated probability that someone outside the supplied candidates wrote this report is ' + pct(value) + '. Review the detailed evidence and consider adding more candidates.</p></div>' : ''; }
+    function stylometryBlock(data) { const diagnostics = data.deterministic_stylometry; if (!diagnostics || !diagnostics.available) return ''; const leaders = diagnostics.metric_leaders || {}; const rows = Object.entries(diagnostics.candidates || {}).map(([name, item]) => '<div class="meta"><strong>' + escapeHtml(name) + '</strong>Character n-gram ' + Number(item.character_ngram_best_three_mean || 0).toFixed(3) + ' · Burrows Δ ' + Number(item.burrows_delta || 0).toFixed(3) + ' · Function-word Δ ' + Number(item.function_word_delta || 0).toFixed(3) + '</div>').join(''); return '<div class="section-title">Deterministic stylometry cross-check</div><p class="explanation">Metric leaders: character n-grams — ' + escapeHtml(leaders.character_ngram_best_three_mean || 'none') + '; Burrows Delta — ' + escapeHtml(leaders.burrows_delta || 'none') + '; function words — ' + escapeHtml(leaders.function_word_delta || 'none') + '. Target length: ' + escapeHtml(diagnostics.target_word_count || 0) + ' words; reliability: ' + escapeHtml(diagnostics.short_sample_reliability || 'unknown') + '.</p><div class="meta-grid">' + rows + '</div><p class="explanation">' + escapeHtml(diagnostics.caveat || '') + '</p>'; }
+    function reviewSnapshotsBlock(data) { const snapshots = data.review_snapshots || []; if (!snapshots.length) return ''; const rows = snapshots.map(snapshot => { const ranking = (snapshot.ranking || []).slice(0, 3).map(item => escapeHtml(item.candidate || '') + ' ' + pct(Number(item.probability || 0))).join(' · '); return '<div class="meta"><strong>' + escapeHtml(snapshot.stage || 'Review') + '</strong>' + ranking + ' · No listed candidate ' + pct(Number(snapshot.no_listed_candidate_probability || 0)) + '</div>'; }).join(''); return '<div class="section-title">Review-round probability snapshots</div><div class="meta-grid">' + rows + '</div><p class="explanation">These high-level distributions show how the evidence changed across rounds; they do not expose private model reasoning.</p>'; }
+    function probabilityAdjustmentBlock(data) { const adjustment = data.probability_adjustment || {}; if (!adjustment.applied) return ''; const raw = adjustment.raw_final_distribution || {}; const adjusted = adjustment.adjusted_distribution || {}; const leader = adjustment.leader || ''; return '<div class="ambiguity"><h3>Multi-stage agreement adjustment</h3><p>' + escapeHtml(adjustment.supporting_stages || 0) + ' of ' + escapeHtml(adjustment.stages_considered || 0) + ' scoring stages retained <strong>' + escapeHtml(leader) + '</strong> as the leader; at least 75% agreed, every supporting stage cleared the minimum separation check, and deterministic evidence supported the leader. A bounded, correlation-discounted adjustment was applied; it is not statistical calibration.</p><p><strong>Raw final score:</strong> ' + pct(Number(raw[leader] || 0)) + '<br><strong>Displayed score:</strong> ' + pct(Number(adjusted[leader] || 0)) + '<br><strong>Adjustment exponent:</strong> ' + escapeHtml(adjustment.exponent || '') + '</p></div>'; }
+    function autoDiscoveryBlock(data) { const discovery = data.auto_discovery; if (!discovery) return ''; const names = (discovery.candidates || []).slice(0, 6).map(item => `${escapeHtml(item.candidate || '')} · ${pct(Number(item.probability || 0))}`).join(' · '); return '<div class="ambiguity"><h3>AI-discovered candidate shortlist</h3><p>The candidate box was empty, so the app first searched for possible public authors and then ran attribution on this shortlist.</p><p><strong>Shortlist:</strong> ' + names + '</p>' + listBlock('Discovery limitations', discovery.limitations) + '</div>'; }
+    function renderAttribution(data) { return resultTools() + '<div class="result-head"><h2>Authorship estimate</h2><span class="badge">' + escapeHtml(data.confidence) + ' confidence</span></div>' + languageProfile(data.language_profile) + ambiguityBlock(data.identity_ambiguity) + noMatchAlert(data) + autoDiscoveryBlock(data) + '<p class="summary">' + escapeHtml(data.summary) + '</p><div>' + (data.candidate_evaluations || []).map(item => '<div class="candidate"><div class="candidate-line"><strong>' + escapeHtml(item.candidate) + '</strong><span class="prob">' + pct(item.probability) + '</span></div><div class="bar"><div class="fill" style="width:' + item.probability * 100 + '%"></div></div><p class="explanation">' + escapeHtml(item.explanation) + '</p>' + evidenceBreakdown(item) + candidateEvidenceDetails(item) + candidateBackground(item) + '<p class="explanation"><strong>Reference corpus:</strong> ' + escapeHtml(item.reference_corpus_summary || '') + '</p></div>').join('') + noListedCandidate(data) + '</div>' + probabilityChart(data) + probabilityAdjustmentBlock(data) + reviewSnapshotsBlock(data) + stylometryBlock(data) + listBlock('Evidence considered', data.evidence) + listBlock('Limitations', data.limitations) + privateCorpusMeta(data.reference_corpus, data.private_corpus_note) + publicCorpusMeta(data.public_corpus) + researchSources(data.research_sources, 'Public research sources') + documentMeta(data.documents) + underlyingDocumentMeta(data.underlying_document) + '<p class="hint" style="margin-top:17px">' + providerLabel(data) + ' · ' + escapeHtml(data.model || '') + ' · reasoning: ' + escapeHtml(data.reasoning_effort || '') + ' · review rounds: ' + escapeHtml(data.review_rounds || '') + '<br>' + escapeHtml(data.review_strategy || '') + '<br>' + escapeHtml(data.analysis_note || '') + '</p>'; }
+    function renderComparison(data) { return resultTools() + '<div class="result-head"><h2>Common-authorship estimate</h2><span class="badge">' + escapeHtml(data.confidence) + ' confidence</span></div>' + languageProfile(data.language_profile) + ambiguityBlock(data.identity_ambiguity) + '<div class="candidate-line"><strong>All documents by one author</strong><span class="prob">' + pct(data.overall_same_author_probability) + '</span></div><div class="bar"><div class="fill" style="width:' + data.overall_same_author_probability * 100 + '%"></div></div><p class="summary" style="margin-top:16px">' + escapeHtml(data.summary) + '</p><div class="section-title">Pairwise comparisons</div>' + (data.pairwise || []).map(item => '<div class="pair"><div class="pair-top"><span>' + escapeHtml(item.document_a) + ' ↔ ' + escapeHtml(item.document_b) + '</span><span class="prob">' + pct(item.same_author_probability) + '</span></div><p class="explanation">' + escapeHtml(item.explanation) + '</p></div>').join('') + listBlock('Shared signals', data.shared_signals) + listBlock('Limitations', data.limitations) + researchSources(data.research_sources, 'Research sources') + documentMeta(data.documents) + '<p class="hint" style="margin-top:17px">' + providerLabel(data) + ' · ' + escapeHtml(data.model || '') + ' · reasoning: ' + escapeHtml(data.reasoning_effort || '') + ' · review rounds: ' + escapeHtml(data.review_rounds || '') + '<br>' + escapeHtml(data.review_strategy || '') + '<br>' + escapeHtml(data.analysis_note || '') + '</p>'; }
+    function renderDiscovery(data) { return resultTools() + '<div class="result-head"><h2>Possible authors</h2><span class="badge">' + escapeHtml(data.confidence) + ' confidence</span></div>' + languageProfile(data.language_profile) + ambiguityBlock(data.identity_ambiguity) + '<p class="summary">' + escapeHtml(data.summary) + '</p>' + (data.discovered_candidates || []).map(item => '<div class="discovered"><div class="candidate-line"><strong>' + escapeHtml(item.candidate) + '</strong><span class="prob">' + pct(item.probability) + '</span></div><div class="bar"><div class="fill" style="width:' + item.probability * 100 + '%"></div></div><p class="explanation">' + escapeHtml(item.why_candidate || '') + '</p>' + candidateBackground(item) + '<p class="explanation"><strong>Solo-work clues:</strong> ' + escapeHtml(item.solo_work_clues || '') + '</p>' + listBlock('Evidence', item.evidence) + '</div>').join('') + listBlock('Limitations', data.limitations) + researchSources(data.research_sources, 'Public research and background sources') + documentMeta(data.documents) + '<p class="hint" style="margin-top:17px">' + providerLabel(data) + ' · ' + escapeHtml(data.model || '') + ' · reasoning: ' + escapeHtml(data.reasoning_effort || '') + ' · review rounds: ' + escapeHtml(data.review_rounds || '') + '<br>' + escapeHtml(data.review_strategy || '') + '<br>' + escapeHtml(data.analysis_note || '') + '</p>'; }
+    function renderResult(data) {
+      let detail = data.mode === 'attribution' ? renderAttribution(data) : data.mode === 'discovery' ? renderDiscovery(data) : renderComparison(data);
+      detail = detail.replace(/^<div class="result-actions">[\s\S]*?<\/div>/, '');
+      let title = data.mode === 'discovery' ? 'Possible authors' : data.mode === 'comparison' ? 'Common-authorship estimate' : 'Authorship estimate';
+      let lead = data.summary || '';
+      let scores = '';
+      if (data.mode === 'attribution') scores = (data.candidate_evaluations || []).slice(0, 3).map(item => '<div class="candidate-line"><strong>' + escapeHtml(item.candidate) + '</strong><span class="prob">' + pct(item.probability) + '</span></div><div class="bar"><div class="fill" style="width:' + item.probability * 100 + '%"></div></div>').join('') + '<div class="candidate-line" style="margin-top:10px"><strong>No listed candidate</strong><span class="prob">' + pct(Number(data.no_listed_candidate_probability || 0)) + '</span></div><div class="bar"><div class="fill" style="width:' + Number(data.no_listed_candidate_probability || 0) * 100 + '%"></div></div>';
+      if (data.mode === 'discovery') scores = (data.discovered_candidates || []).slice(0, 3).map(item => '<div class="candidate-line"><strong>' + escapeHtml(item.candidate) + '</strong><span class="prob">' + pct(item.probability) + '</span></div><div class="bar"><div class="fill" style="width:' + item.probability * 100 + '%"></div></div>').join('');
+      if (data.mode === 'comparison') scores = '<div class="candidate-line"><strong>All documents by one author</strong><span class="prob">' + pct(data.overall_same_author_probability) + '</span></div><div class="bar"><div class="fill" style="width:' + data.overall_same_author_probability * 100 + '%"></div></div>';
+      const ignored = Object.entries(data.analysis_controls || {}).filter(entry => entry[1]).map(entry => entry[0].replace('ignore_', '').replaceAll('_', ' '));
+      const timing = Number.isFinite(Number(data.total_elapsed_seconds)) ? '<p><strong>Total analysis time:</strong> ' + formatDuration(data.total_elapsed_seconds) + '.</p>' : '';
+      return resultTools() + '<div class="compact-result"><h3>' + escapeHtml(title) + '</h3><p>' + escapeHtml(lead) + '</p>' + scores + '<p><strong>Deep review:</strong> ' + escapeHtml(data.review_rounds || 'multiple') + ' workflow rounds completed.</p>' + timing + (data.mode === 'attribution' && Number(data.no_listed_candidate_probability || 0) >= .3 ? '<p><strong>Candidate list warning:</strong> the report may have been written by someone outside the supplied candidates.</p>' : '') + (data.identity_ambiguity && data.identity_ambiguity.is_ambiguous ? '<p><strong>Help needed:</strong> same-name identities remain unresolved. See the detailed report for questions.</p>' : '') + (ignored.length ? '<p><strong>Ignored:</strong> ' + escapeHtml(ignored.join(', ')) + '</p>' : '') + '</div><details class="report-details"><summary>Expand detailed report</summary>' + detail + '</details>';
+    }
+    function autoDiscoveryBlock(data) { const discovery = data.auto_discovery; let output = ''; if (discovery) { const names = (discovery.candidates || []).slice(0, 6).map(item => escapeHtml(item.candidate || '') + ' · ' + pct(Number(item.probability || 0))).join(' · '); output += '<div class="ambiguity"><h3>AI-discovered candidate shortlist</h3><p>The candidate box was empty, so the app first searched for possible public authors and then ran attribution on this shortlist.</p><p><strong>Shortlist:</strong> ' + names + '</p>' + listBlock('Discovery limitations', discovery.limitations) + '</div>'; } const review = data.adaptive_review; if (review && Number(review.targeted_rounds || 0)) { const focus = (review.focus_candidates || []).map(escapeHtml).join(' · '); output += '<div class="ambiguity"><h3>Focused follow-up review</h3><p>The first pass left several candidates close, so the app ran targeted comparisons before final adjudication.</p><p><strong>Focused candidates:</strong> ' + focus + '<br><strong>Additional rounds:</strong> ' + escapeHtml(review.targeted_rounds) + '<br>' + escapeHtml(review.stopping_reason || '') + '</p></div>'; } return output; }
+    </script>
+</body>
+</html>

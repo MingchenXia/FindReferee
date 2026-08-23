@@ -1,0 +1,37 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Local app state and public-corpus caches
+.author-attribution-cache/
+author_attribution_cache/
+*.sqlite
+*.sqlite3
+*.db
+
+# Private evaluation fixtures, outputs, and machine-specific notes
+benchmarks/
+BEST_VERSION.md
+
+# User uploads and generated reports
+uploads/
+reports/
+author-analysis-*.json
+author-report-*.html
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
