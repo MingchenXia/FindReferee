@@ -398,11 +398,13 @@
 
     form.addEventListener('submit', async e => {
       e.preventDefault();
+      const analysisStartedAt = performance.now();
       const button = document.querySelector('#submit'); button.disabled = true; button.textContent = 'Analyzing…';
       showThinking(mode.value === 'comparison' ? 'Comparing the document set…' : mode.value === 'discovery' ? 'Discovering possible authors…' : candidateNames().length ? 'Researching the candidate authors…' : 'Discovering possible authors, then researching them…');
       const data = makeFormData();
       try {
         const payload = await runAnalysisInBackground(data);
+        payload.total_elapsed_seconds = Math.round(Math.max(Number(payload.total_elapsed_seconds || 0), (performance.now() - analysisStartedAt) / 1000) * 10) / 10;
         stopThinking();
         result.innerHTML = renderResult(payload);
         bindResultActions(payload);
