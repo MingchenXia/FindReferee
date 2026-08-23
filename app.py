@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -14,8 +15,9 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from openai import OpenAI
 from pypdf import PdfReader
 
@@ -65,9 +67,62 @@ ANALYSIS_NOTE = (
     "Probabilities are relative model estimates, not calibrated statistical probabilities "
     "or proof of identity. Private reference files are used only for this analysis and are not included in public-source citations."
 )
+DEFAULT_BROWSER_ORIGINS = {
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "https://mingchenxia.github.io",
+}
+ALLOWED_BROWSER_ORIGINS = DEFAULT_BROWSER_ORIGINS | {
+    origin.strip().rstrip("/")
+    for origin in os.getenv("FINDREFEREE_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+}
+BROWSER_SESSION_TOKEN = secrets.token_urlsafe(32)
 
-app = FastAPI(title="FindReferee", version="1.0.0")
+app = FastAPI(title="FindReferee", version="1.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(ALLOWED_BROWSER_ORIGINS),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type", "X-FindReferee-Session"],
+    allow_private_network=True,
+)
 ANALYSIS_JOBS: dict[str, dict[str, Any]] = {}
+
+
+def _browser_origin_allowed(origin: str | None) -> bool:
+    return not origin or origin.rstrip("/") in ALLOWED_BROWSER_ORIGINS
+
+
+def _browser_error(status_code: int, detail: str, origin: str | None = None) -> JSONResponse:
+    response = JSONResponse(status_code=status_code, content={"detail": detail})
+    if origin and origin.rstrip("/") in ALLOWED_BROWSER_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin.rstrip("/")
+        response.headers["Vary"] = "Origin"
+    return response
+
+
+@app.middleware("http")
+async def protect_local_companion(request: Request, call_next: Callable[..., Any]) -> Any:
+    """Allow only the published UI or local UI to drive browser-originated work."""
+    origin = request.headers.get("origin")
+    if not _browser_origin_allowed(origin):
+        return _browser_error(403, "This browser origin is not allowed to use the local FindReferee companion.")
+    if (
+        origin
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+        and request.headers.get("x-findreferee-session") != BROWSER_SESSION_TOKEN
+    ):
+        return _browser_error(403, "The local companion session expired. Refresh the page and try again.", origin)
+    response = await call_next(request)
+    if (
+        origin
+        and origin.rstrip("/") in ALLOWED_BROWSER_ORIGINS
+        and request.headers.get("access-control-request-private-network", "").lower() == "true"
+    ):
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 
 ATTRIBUTION_SCHEMA: dict[str, Any] = {
@@ -2004,6 +2059,8 @@ async def provider_status() -> dict[str, Any]:
         "codex_available": command is not None,
         "codex_command": Path(command[0]).name if command else None,
         "api_key_configured": bool(os.getenv("OPENAI_API_KEY")),
+        "session_token": BROWSER_SESSION_TOKEN,
+        "companion_version": app.version,
         "message": (
             "Automatic analyses will use the signed-in Codex account on this computer."
             if command and MODEL_PROVIDER in {"auto", "codex", "chatgpt"}

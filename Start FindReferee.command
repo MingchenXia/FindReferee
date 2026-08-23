@@ -35,12 +35,13 @@ if [[ "$REQUIREMENTS_DIGEST" != "$INSTALLED_DIGEST" ]]; then
   print -r -- "$REQUIREMENTS_DIGEST" > "$STAMP_FILE"
 fi
 
-APP_URL="http://127.0.0.1:8000/"
-if curl --silent --fail "$APP_URL" >/dev/null 2>&1; then
-  open "$APP_URL"
+LOCAL_HEALTH_URL="http://127.0.0.1:8000/health"
+PUBLIC_APP_URL="https://mingchenxia.github.io/FindReferee/"
+if curl --silent --fail "$LOCAL_HEALTH_URL" >/dev/null 2>&1; then
+  open "$PUBLIC_APP_URL"
   exit 0
 fi
 
 echo "Starting FindReferee… Keep this window open while using the app."
-(sleep 1; open "$APP_URL") &
+(sleep 1; open "$PUBLIC_APP_URL") &
 exec env CODEX_TIMEOUT_SECONDS=1200 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000

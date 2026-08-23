@@ -1,6 +1,6 @@
 # FindReferee
 
-FindReferee is a local, open-source assistant for investigating who may have written a referee report or other document. Give it a target file and a candidate shortlist, and it returns an uncertainty-aware probability distribution, a concise result, and an expandable evidence report. If the shortlist is empty, it can build a cautious public candidate shortlist before attribution.
+FindReferee is an open-source assistant for investigating who may have written a referee report or other document. Its interface is hosted at [mingchenxia.github.io/FindReferee](https://mingchenxia.github.io/FindReferee/), while a small local companion keeps document handling and Codex subscription access on the user's own computer. Give it a target file and a candidate shortlist, and it returns an uncertainty-aware probability distribution, a concise result, and an expandable evidence report. If the shortlist is empty, it can build a cautious public candidate shortlist before attribution.
 
 It can also compare several documents for likely common authorship.
 
@@ -46,13 +46,14 @@ Each computer uses its own Codex login. Never copy Codex credential files betwee
 
 ## Quick start
 
-### macOS launcher
+### Hosted interface with the macOS companion
 
-1. Install and sign in to Codex once with `codex login`.
-2. Double-click **Start FindReferee.command**.
-3. Keep the launcher window open while using the app.
+1. Open [FindReferee online](https://mingchenxia.github.io/FindReferee/).
+2. Download and extract the companion from the page, or clone this repository.
+3. Install and sign in to Codex once with `codex login`.
+4. Double-click **Start FindReferee.command** and keep its window open while using the site.
 
-The launcher creates the virtual environment, installs dependencies on first use, starts the local server, and opens the app.
+The launcher creates the virtual environment, installs dependencies on first use, starts the loopback-only companion, and opens the hosted interface. If the browser asks whether the site may access devices on the local network, allow it so the page can reach the companion on this computer.
 
 ### Manual setup
 
@@ -64,7 +65,7 @@ python3 -m venv .venv
 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+Then open [FindReferee online](https://mingchenxia.github.io/FindReferee/). The locally served interface at [http://127.0.0.1:8000](http://127.0.0.1:8000) remains available as an offline fallback.
 
 ## Using FindReferee
 
@@ -91,12 +92,15 @@ Copy `.env.example` values into your shell environment or launcher configuration
 | `OPENAI_MODEL` | `gpt-5-mini` | Model used by the optional API fallback. |
 | `AUTHOR_ATTRIBUTION_ADAPTIVE_ROUNDS` | `3` | Maximum targeted finalist rounds, from 0 to 4. |
 | `AUTHOR_ATTRIBUTION_PUBLIC_CORPUS` | `true` | Enable exact-name solo-work collection from arXiv. |
+| `FINDREFEREE_ALLOWED_ORIGINS` | unset | Optional comma-separated additional hosted frontend origins. |
 
 Model names must be available to the signed-in account or configured API project. If a subscription, quota, model-access, or authentication problem occurs, FindReferee displays the provider error in the interface.
 
 ## Privacy and data handling
 
 - The server binds to `127.0.0.1` by default.
+- The hosted page contains no model credential and performs no analysis by itself; it sends requests only to the companion on the same computer.
+- Browser requests are restricted to the official GitHub Pages origin and configured local origins. Mutating requests also require a random session token that changes whenever the companion restarts.
 - The app does not read, copy, or transmit Codex authentication files.
 - Uploaded files are held in memory for the active analysis and are not intentionally written to persistent app storage.
 - Private candidate corpora are sent to the selected model for that run, but are not used as public-search queries or shown as public citations.

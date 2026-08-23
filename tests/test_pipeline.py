@@ -90,6 +90,12 @@ class PublicCorpusTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_local_companion_accepts_only_configured_browser_origins(self) -> None:
+        self.assertTrue(app._browser_origin_allowed(None))
+        self.assertTrue(app._browser_origin_allowed("http://127.0.0.1:8000"))
+        self.assertTrue(app._browser_origin_allowed("https://mingchenxia.github.io"))
+        self.assertFalse(app._browser_origin_allowed("https://malicious.example"))
+
     def test_analysis_elapsed_seconds_is_rounded_and_never_negative(self) -> None:
         self.assertEqual(app._analysis_elapsed_seconds({"created_at": 10.0}, 72.34), 62.3)
         self.assertEqual(app._analysis_elapsed_seconds({"created_at": 72.0}, 10.0), 0.0)
