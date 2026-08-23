@@ -1,5 +1,6 @@
 fastapi>=0.115.0
 lingua-language-detector>=2.1.0
+openai>=1.60.0
 pypdf>=5.0.0
 python-multipart>=0.0.9
 rapidfuzz>=3.9.0

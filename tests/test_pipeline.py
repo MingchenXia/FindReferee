@@ -90,29 +90,6 @@ class PublicCorpusTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
-    def test_hosted_surface_offers_direct_local_fallback(self) -> None:
-        markup = (Path(app.APP_DIR) / "static" / "index.html").read_text(encoding="utf-8")
-        self.assertIn('class="open-local-app" href="http://127.0.0.1:8000/"', markup)
-        self.assertIn("select Open local app", markup)
-
-    def test_macos_launcher_opens_same_origin_local_interface(self) -> None:
-        launcher = (Path(app.APP_DIR) / "Start FindReferee.command").read_text(encoding="utf-8")
-        self.assertIn('LOCAL_APP_URL="http://127.0.0.1:8000/"', launcher)
-        self.assertNotIn("PUBLIC_APP_URL", launcher)
-
-    def test_distribution_is_codex_subscription_only(self) -> None:
-        requirements = (Path(app.APP_DIR) / "requirements.txt").read_text(encoding="utf-8").lower()
-        source = (Path(app.APP_DIR) / "app.py").read_text(encoding="utf-8")
-        self.assertNotIn("openai", requirements)
-        self.assertNotIn("OPENAI_API_KEY", source)
-        self.assertNotIn("openai-api", source)
-
-    def test_local_companion_accepts_only_configured_browser_origins(self) -> None:
-        self.assertTrue(app._browser_origin_allowed(None))
-        self.assertTrue(app._browser_origin_allowed("http://127.0.0.1:8000"))
-        self.assertTrue(app._browser_origin_allowed("https://mingchenxia.github.io"))
-        self.assertFalse(app._browser_origin_allowed("https://malicious.example"))
-
     def test_analysis_elapsed_seconds_is_rounded_and_never_negative(self) -> None:
         self.assertEqual(app._analysis_elapsed_seconds({"created_at": 10.0}, 72.34), 62.3)
         self.assertEqual(app._analysis_elapsed_seconds({"created_at": 72.0}, 10.0), 0.0)

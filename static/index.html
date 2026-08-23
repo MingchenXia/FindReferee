@@ -92,20 +92,8 @@
     .meta strong { display:block; color:#3b5054; font-size:12px; margin-bottom:2px; }
     .secondary-action { width:100%; border:1px solid #b8d2d0; border-radius:11px; background:#f7fcfb; color:var(--teal-dark); cursor:pointer; font:inherit; font-size:13px; font-weight:800; padding:11px 16px; margin-top:9px; }
     .secondary-action:hover { background:var(--soft); }
-    .secondary-action:disabled { cursor:not-allowed; opacity:.55; }
-    .companion-banner { display:flex; align-items:center; gap:12px; background:#fffaf0; border:1px solid #ead7a6; border-radius:14px; color:#66522b; margin:-8px 0 22px; padding:12px 14px; box-shadow:0 8px 24px rgba(70,60,34,.05); }
-    .companion-banner[hidden] { display:none; }
-    .companion-dot { width:10px; height:10px; flex:0 0 10px; border-radius:50%; background:#c58d28; box-shadow:0 0 0 4px rgba(197,141,40,.12); }
-    .companion-banner.connected { background:#f2fbf8; border-color:#b9ddd6; color:#285c56; }
-    .companion-banner.connected .companion-dot { background:#15927f; box-shadow:0 0 0 4px rgba(21,146,127,.12); }
-    .companion-copy { min-width:0; flex:1; }
-    .companion-copy strong { display:block; color:inherit; font-size:13px; margin-bottom:2px; }
-    .companion-copy span { display:block; font-size:12px; line-height:1.45; }
-    .companion-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
-    .companion-actions a, .companion-actions button { border:1px solid #cdbb8e; border-radius:8px; background:#fff; color:#755c27; cursor:pointer; font:inherit; font-size:11px; font-weight:800; padding:7px 9px; text-decoration:none; white-space:nowrap; }
-    .companion-actions .open-local-app { background:#755c27; border-color:#755c27; color:#fff; }
-    .companion-banner.connected .companion-actions a, .companion-banner.connected .companion-actions button { border-color:#b9d8d3; color:#24665e; }
-    .companion-banner.connected .companion-actions .open-local-app { background:#24665e; border-color:#24665e; color:#fff; }
+    .manual-prompt { min-height:250px; resize:vertical; background:#f8fbfa; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; line-height:1.5; }
+    .manual-response { min-height:150px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
     .source { border-top:1px solid var(--line); padding:10px 0; font-size:12px; line-height:1.45; }
     .source:first-child { border-top:0; padding-top:0; }
     .source a { color:var(--teal-dark); font-weight:750; text-decoration:none; }
@@ -204,7 +192,7 @@
     @keyframes twinkle { 0%,100% { opacity:.35; transform:scale(.8); } 50% { opacity:1; transform:scale(1.15); } }
     @keyframes cartoonClick { 0% { transform:scale(1) rotate(0); } 35% { transform:scale(1.18) rotate(-8deg); } 68% { transform:scale(.92) rotate(7deg); } 100% { transform:scale(1) rotate(0); } }
     @media (prefers-reduced-motion:reduce) { .cartoon, .cartoon .eye, .cartoon .magnifier, .spark { animation:none; } .cartoon.clicked { animation:cartoonClick .7s ease; } }
-    @media (max-width:800px) { .layout { grid-template-columns:1fr; } header { margin-bottom:23px; } .mark { display:none; } .header-tools { align-items:flex-start; } .thinking-facts { grid-template-columns:1fr; } .companion-banner { align-items:flex-start; flex-wrap:wrap; } .companion-actions { width:100%; justify-content:flex-start; padding-left:22px; } }
+    @media (max-width:800px) { .layout { grid-template-columns:1fr; } header { margin-bottom:23px; } .mark { display:none; } .header-tools { align-items:flex-start; } .thinking-facts { grid-template-columns:1fr; } }
   </style>
 </head>
 <body class="minimal-mode">
@@ -213,11 +201,6 @@
       <div><h1>Who might have written this report?</h1><p class="lede">Log in to Codex, upload a report, enter possible referees, and start the analysis.</p></div>
       <div class="header-tools"><div class="view-toggle" role="group" aria-label="View mode"><span class="view-toggle-label">View</span><button type="button" data-view="detailed" aria-pressed="false">Detailed</button><button type="button" class="active" data-view="minimal" aria-pressed="true">Minimal</button></div><div class="mark">Aa</div></div>
     </header>
-    <section class="companion-banner" id="companion-banner" role="status" aria-live="polite" hidden>
-      <span class="companion-dot" aria-hidden="true"></span>
-      <div class="companion-copy"><strong id="companion-title">Connecting to the local companion…</strong><span id="companion-message">FindReferee keeps files and Codex access on this computer.</span></div>
-      <div class="companion-actions"><a class="open-local-app" href="http://127.0.0.1:8000/">Open local app</a><a href="https://github.com/MingchenXia/FindReferee/archive/refs/heads/main.zip">Download companion</a><a href="https://github.com/MingchenXia/FindReferee#quick-start" target="_blank" rel="noopener noreferrer">Setup guide</a><button type="button" id="check-companion">Check again</button></div>
-    </section>
     <section class="layout">
       <form class="card" id="analysis-form">
         <div class="tabs"><button type="button" class="tab active" data-mode="attribution">Attribute a document</button><button type="button" class="tab" data-mode="comparison">Compare documents</button></div>
@@ -240,8 +223,6 @@
     </section>
   </main>
   <script>
-    const HOSTED_MODE = location.hostname.toLowerCase() === 'mingchenxia.github.io';
-    const LOCAL_API_ORIGIN = 'http://127.0.0.1:8000';
     const form = document.querySelector('#analysis-form');
     const mode = document.querySelector('#mode');
     const candidateField = document.querySelector('#candidate-field');
@@ -258,10 +239,6 @@
     const subjectDrop = document.querySelector('#subject-drop');
     const subjectDocumentPanel = document.querySelector('#subject-document-panel');
     const result = document.querySelector('#result');
-    const submitButton = document.querySelector('#submit');
-    const companionBanner = document.querySelector('#companion-banner');
-    const companionTitle = document.querySelector('#companion-title');
-    const companionMessage = document.querySelector('#companion-message');
     const candidatesInput = document.querySelector('#candidates');
     const referenceGroups = document.querySelector('#reference-groups');
     const referenceFilesByAuthor = new Map();
@@ -279,57 +256,6 @@
     let analysisReviewPasses = 3;
     let thinkingStage = '';
     let thinkingClues = [];
-    let companionConnected = !HOSTED_MODE;
-    let companionSessionToken = '';
-
-    function apiUrl(path) { return HOSTED_MODE ? `${LOCAL_API_ORIGIN}${path}` : path; }
-    function applyProviderStatus(status) {
-      if (status.default_model) { if (![...modelSelect.options].some(option => option.value === status.default_model)) modelSelect.add(new Option(status.default_model + ' (server default)', status.default_model)); modelSelect.value = status.default_model; }
-      if (status.default_reasoning_effort && [...reasoningSelect.options].some(option => option.value === status.default_reasoning_effort)) reasoningSelect.value = status.default_reasoning_effort;
-      if (Number(status.review_passes)) analysisReviewPasses = Number(status.review_passes);
-      companionSessionToken = status.session_token || '';
-      const ready = Boolean(status.codex_available);
-      companionConnected = ready;
-      if (HOSTED_MODE) {
-        companionBanner.classList.toggle('connected', ready);
-        companionTitle.textContent = ready ? 'Local companion connected' : 'Companion connected, but Codex is unavailable';
-        companionMessage.textContent = ready ? `Ready to analyze through this computer's signed-in Codex subscription${status.companion_version ? ` · companion ${status.companion_version}` : ''}.` : 'Install Codex, sign in with ChatGPT, then restart the companion.';
-        submitButton.disabled = !ready;
-      }
-    }
-    async function checkCompanionConnection() {
-      if (HOSTED_MODE) {
-        companionBanner.hidden = false;
-        companionBanner.classList.remove('connected');
-        companionTitle.textContent = 'Connecting to the local companion…';
-        companionMessage.textContent = 'If your browser asks for Local Network Access, allow it for this page.';
-        submitButton.disabled = true;
-      }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3500);
-      try {
-        const response = await fetch(apiUrl('/api/provider'), {cache:'no-store', signal:controller.signal});
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        applyProviderStatus(await response.json());
-        return companionConnected;
-      } catch (_) {
-        companionConnected = !HOSTED_MODE;
-        companionSessionToken = '';
-        if (HOSTED_MODE) {
-          companionTitle.textContent = 'Local companion not connected';
-          companionMessage.textContent = 'This browser may be blocking the secure website from reaching this computer. If the companion is running, select Open local app; otherwise start it first.';
-          submitButton.disabled = true;
-        }
-        return false;
-      } finally { clearTimeout(timeout); }
-    }
-    async function initializeCompanion() {
-      if (!HOSTED_MODE) { await checkCompanionConnection(); return; }
-      for (let attempt = 0; attempt < 6; attempt += 1) {
-        if (await checkCompanionConnection()) return;
-        await new Promise(resolve => setTimeout(resolve, 1400));
-      }
-    }
 
     document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
       const minimal = button.dataset.view === 'minimal';
@@ -343,8 +269,11 @@
       cartoon.addEventListener('animationend', () => cartoon.classList.remove('clicked'), {once:true});
     });
 
-    initializeCompanion();
-    document.querySelector('#check-companion').addEventListener('click', checkCompanionConnection);
+    fetch('/api/provider').then(response => response.json()).then(status => {
+      if (status.default_model) { if (![...modelSelect.options].some(option => option.value === status.default_model)) modelSelect.add(new Option(status.default_model + ' (server default)', status.default_model)); modelSelect.value = status.default_model; }
+      if (status.default_reasoning_effort && [...reasoningSelect.options].some(option => option.value === status.default_reasoning_effort)) reasoningSelect.value = status.default_reasoning_effort;
+      if (Number(status.review_passes)) analysisReviewPasses = Number(status.review_passes);
+    }).catch(() => {});
 
     document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(item => item.classList.remove('active'));
@@ -398,16 +327,8 @@
     function escapeHtml(value) { return String(value ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
     async function requestJson(url, options) {
       let response;
-      const requestOptions = {...(options || {})};
-      const method = String(requestOptions.method || 'GET').toUpperCase();
-      if (companionSessionToken && !['GET','HEAD','OPTIONS'].includes(method)) {
-        const headers = new Headers(requestOptions.headers || {});
-        headers.set('X-FindReferee-Session', companionSessionToken);
-        requestOptions.headers = headers;
-      }
-      try { response = await fetch(apiUrl(url), requestOptions); } catch (error) {
-        const guidance = HOSTED_MODE ? 'The browser could not reach the local companion. Start it, then use Open local app above; this avoids browser Local Network Access restrictions.' : 'The local analysis server is not running. Start the app server and try again.';
-        throw new Error(guidance + ' Browser detail: ' + (error.message || 'network request failed'));
+      try { response = await fetch(url, options); } catch (error) {
+        throw new Error('The local analysis server is not running or the page is not open from http://127.0.0.1:8000. Start the app server, open that address, and try again. Browser detail: ' + (error.message || 'network request failed'));
       }
       const body = await response.text();
       let payload;
@@ -477,14 +398,11 @@
 
     form.addEventListener('submit', async e => {
       e.preventDefault();
-      if (HOSTED_MODE && !companionConnected) { await checkCompanionConnection(); if (!companionConnected) return; }
-      const analysisStartedAt = performance.now();
       const button = document.querySelector('#submit'); button.disabled = true; button.textContent = 'Analyzing…';
       showThinking(mode.value === 'comparison' ? 'Comparing the document set…' : mode.value === 'discovery' ? 'Discovering possible authors…' : candidateNames().length ? 'Researching the candidate authors…' : 'Discovering possible authors, then researching them…');
       const data = makeFormData();
       try {
         const payload = await runAnalysisInBackground(data);
-        payload.total_elapsed_seconds = Math.round(Math.max(Number(payload.total_elapsed_seconds || 0), (performance.now() - analysisStartedAt) / 1000) * 10) / 10;
         stopThinking();
         result.innerHTML = renderResult(payload);
         bindResultActions(payload);
@@ -506,9 +424,10 @@
     function pct(value) { return `${Math.round(value * 100)}%`; }
     function formatDuration(value) { const seconds = Math.max(0, Math.round(Number(value) || 0)); const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); const remainder = seconds % 60; if (hours) return `${hours}h ${minutes}m ${remainder}s`; if (minutes) return `${minutes}m ${remainder}s`; return `${remainder}s`; }
     function resultTools() { return `<div class="result-actions"><button type="button" data-action="copy">Copy JSON</button><button type="button" data-action="download">Download JSON</button><button type="button" data-action="download-report">Download report</button></div>`; }
-    function providerLabel(data) { return data.provider === 'chatgpt-subscription-codex' ? 'ChatGPT subscription · Codex' : 'Local Codex'; }
+    function providerLabel(data) { return data.provider === 'chatgpt-subscription-codex' ? 'ChatGPT subscription · Codex' : data.provider === 'openai-api' ? 'OpenAI API' : 'Manual'; }
     function renderAttribution(data) { return `${resultTools()}<div class="result-head"><h2>Authorship estimate</h2><span class="badge">${escapeHtml(data.confidence)} confidence</span></div><p class="summary">${escapeHtml(data.summary)}</p><div>${data.candidate_evaluations.map(item => `<div class="candidate"><div class="candidate-line"><strong>${escapeHtml(item.candidate)}</strong><span class="prob">${pct(item.probability)}</span></div><div class="bar"><div class="fill" style="width:${item.probability * 100}%"></div></div><p class="explanation">${escapeHtml(item.explanation)}</p><p class="explanation"><strong>Reference corpus:</strong> ${escapeHtml(item.reference_corpus_summary || '')}</p></div>`).join('')}</div>${listBlock('Evidence considered', data.evidence)}${listBlock('Limitations', data.limitations)}${privateCorpusMeta(data.reference_corpus, data.private_corpus_note)}${researchSources(data.research_sources, 'Public research sources')}${documentMeta(data.documents)}<p class="hint" style="margin-top:17px">${providerLabel(data)} · ${escapeHtml(data.model || '')}<br>${escapeHtml(data.analysis_note || '')}</p>`; }
     function renderComparison(data) { return `${resultTools()}<div class="result-head"><h2>Common-authorship estimate</h2><span class="badge">${escapeHtml(data.confidence)} confidence</span></div><div class="candidate-line"><strong>All documents by one author</strong><span class="prob">${pct(data.overall_same_author_probability)}</span></div><div class="bar"><div class="fill" style="width:${data.overall_same_author_probability * 100}%"></div></div><p class="summary" style="margin-top:16px">${escapeHtml(data.summary)}</p><div class="section-title">Pairwise comparisons</div>${data.pairwise.map(item => `<div class="pair"><div class="pair-top"><span>${escapeHtml(item.document_a)} ↔ ${escapeHtml(item.document_b)}</span><span class="prob">${pct(item.same_author_probability)}</span></div><p class="explanation">${escapeHtml(item.explanation)}</p></div>`).join('')}${listBlock('Shared signals', data.shared_signals)}${listBlock('Limitations', data.limitations)}${researchSources(data.research_sources, 'Research sources')}${documentMeta(data.documents)}<p class="hint" style="margin-top:17px">${providerLabel(data)} · ${escapeHtml(data.model || '')}<br>${escapeHtml(data.analysis_note || '')}</p>`; }
+    function renderPrepared(data) { return `<div class="result-head"><h2>ChatGPT subscription handoff</h2><span class="badge">No API key</span></div><p class="summary">Copy this prompt into ChatGPT, ask it to return the JSON only, then paste the response below. The app will normalize and render the result.</p><label for="prepared-prompt">Prompt for ChatGPT</label><textarea id="prepared-prompt" class="manual-prompt" readonly>${escapeHtml(data.prompt)}</textarea><button type="button" class="secondary-action" data-action="copy-prompt">Copy prompt</button><label for="manual-response">Paste ChatGPT’s JSON response</label><textarea id="manual-response" class="manual-response" placeholder="{&quot;summary&quot;: ..., &quot;candidate_evaluations&quot;: [...]}" ></textarea><button type="button" class="primary" data-action="render-manual">Render analysis</button><p class="hint" style="margin-top:14px">${escapeHtml(data.analysis_note)}</p>`; }
     function documentMeta(documents) { if (!documents || !documents.length) return ''; return `<div class="section-title">Sample quality</div><div class="meta-grid">${documents.map(doc => { const pdfMeta = doc.pdf_metadata ? `<br><span>PDF metadata: ${escapeHtml(Object.entries(doc.pdf_metadata).map(([key,value]) => `${key}=${value}`).join(' · '))}</span>` : ''; return `<div class="meta"><strong>${escapeHtml(doc.name)}</strong>${escapeHtml(doc.format || 'text')} · ${doc.words.toLocaleString()} words · ${doc.characters.toLocaleString()} characters<br>${escapeHtml(doc.quality)}${doc.truncated ? ' · input truncated' : ''}<br>${escapeHtml(doc.quality_note)}${pdfMeta}</div>`; }).join('')}</div>`; }
     function underlyingDocumentMeta(document) { if (!document) return ''; const pdfMeta = document.pdf_metadata ? `<br><span>PDF metadata: ${escapeHtml(Object.entries(document.pdf_metadata).map(([key,value]) => `${key}=${value}`).join(' · '))}</span>` : ''; return `<div class="section-title">Underlying document context</div><div class="meta"><strong>${escapeHtml(document.name)}</strong>${escapeHtml(document.format || 'text')} · ${document.words.toLocaleString()} words · ${document.characters.toLocaleString()} characters<br>${escapeHtml(document.quality)}${document.truncated ? ' · input truncated' : ''}<br>Used for subject context and reviewer-role consistency, never as referee-style evidence.${pdfMeta}</div>`; }
     function privateCorpusMeta(corpus, note) { if (!corpus || !Object.keys(corpus).length) return ''; return `<div class="section-title">Private reference corpus</div><div class="meta-grid">${Object.entries(corpus).map(([author, info]) => `<div class="meta"><strong>${escapeHtml(author)}</strong>${info.files} files · ${info.characters.toLocaleString()} characters<br>${info.truncated_files ? `${info.truncated_files} file(s) truncated` : 'No reference file truncation'}<br>Used only for this analysis</div>`).join('')}</div><p class="hint" style="margin-top:8px">${escapeHtml(note || '')}</p>`; }
@@ -528,6 +447,27 @@
         const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `author-report-${new Date().toISOString().slice(0,10)}.html`; link.click(); URL.revokeObjectURL(url); event.currentTarget.textContent = 'Report downloaded'; setTimeout(() => event.currentTarget.textContent = 'Download report', 1600);
       });
     }
+    function bindPreparedActions(data) {
+      result.querySelector('[data-action="copy-prompt"]').addEventListener('click', async event => { await navigator.clipboard.writeText(data.prompt); event.currentTarget.textContent = 'Prompt copied'; setTimeout(() => event.currentTarget.textContent = 'Copy prompt', 1400); });
+      result.querySelector('[data-action="render-manual"]').addEventListener('click', () => {
+        try {
+          const parsed = parseManualJson(result.querySelector('#manual-response').value);
+          if (!parsed || typeof parsed !== 'object') throw new Error('The response must be a JSON object.');
+          parsed.mode = data.mode; parsed.documents = data.documents; parsed.model = 'ChatGPT subscription (manual)'; parsed.analysis_note = data.analysis_note;
+          if (data.mode === 'attribution') {
+            const names = document.querySelector('#candidates').value.split(/[\n,;]+/).map(name => name.trim()).filter(Boolean);
+            parsed.candidate_evaluations = normalizeManualAttribution(parsed.candidate_evaluations, names);
+            result.innerHTML = renderResult(parsed);
+          } else {
+            if (!Array.isArray(parsed.pairwise)) throw new Error('The JSON is missing the pairwise comparisons.');
+            result.innerHTML = renderResult(parsed);
+          }
+          bindResultActions(parsed);
+        } catch (error) { result.querySelector('#manual-response').insertAdjacentHTML('afterend', `<div class="error" style="margin-top:10px">${escapeHtml(error.message)}</div>`); }
+      });
+    }
+    function normalizeManualAttribution(items, names) { const byName = new Map((Array.isArray(items) ? items : []).map(item => [item.candidate, item])); const normalized = names.map(name => ({candidate:name, probability:Math.max(0, Number(byName.get(name)?.probability || 0)), explanation:byName.get(name)?.explanation || 'No separate explanation was returned.'})); const total = normalized.reduce((sum, item) => sum + item.probability, 0) || normalized.length || 1; normalized.forEach(item => item.probability /= total); return normalized.sort((a,b) => b.probability-a.probability); }
+    function parseManualJson(raw) { const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''); return JSON.parse(cleaned); }
   </script>
 <script>
     function languageProfile(profile) {

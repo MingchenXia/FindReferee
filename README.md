@@ -1,6 +1,6 @@
 # FindReferee
 
-FindReferee is an open-source assistant for investigating who may have written a referee report or other document. Its interface is hosted at [mingchenxia.github.io/FindReferee](https://mingchenxia.github.io/FindReferee/), while a small local companion keeps document handling and Codex subscription access on the user's own computer. Give it a target file and a candidate shortlist, and it returns an uncertainty-aware probability distribution, a concise result, and an expandable evidence report. If the shortlist is empty, it can build a cautious public candidate shortlist before attribution.
+FindReferee is a local, open-source assistant for investigating who may have written a referee report or other document. Give it a target file and a candidate shortlist, and it returns an uncertainty-aware probability distribution, a concise result, and an expandable evidence report. If the shortlist is empty, it can build a cautious public candidate shortlist before attribution.
 
 It can also compare several documents for likely common authorship.
 
@@ -21,7 +21,7 @@ It can also compare several documents for likely common authorship.
 - Explicit “No listed candidate” probability and same-name identity questions
 - Minimal and detailed interface modes, animated progress, stable clue display, and completed-run duration
 - Downloadable JSON and self-contained HTML reports
-- Signed-in local Codex subscription only; no OpenAI API key or API billing
+- Signed-in Codex subscription by default; OpenAI API key only as an optional fallback
 
 ## How it works
 
@@ -46,14 +46,13 @@ Each computer uses its own Codex login. Never copy Codex credential files betwee
 
 ## Quick start
 
-### Hosted interface with the macOS companion
+### macOS launcher
 
-1. Open [FindReferee online](https://mingchenxia.github.io/FindReferee/).
-2. Download and extract the companion from the page, or clone this repository.
-3. Install and sign in to Codex once with `codex login`.
-4. Double-click **Start FindReferee.command** and keep its window open while using the app.
+1. Install and sign in to Codex once with `codex login`.
+2. Double-click **Start FindReferee.command**.
+3. Keep the launcher window open while using the app.
 
-The launcher creates the virtual environment, installs dependencies on first use, starts the loopback-only companion, and opens the reliable local interface at [http://127.0.0.1:8000](http://127.0.0.1:8000). The hosted page also offers **Open local app**. This direct local page avoids browser restrictions that can prevent an HTTPS page from contacting a local HTTP service.
+The launcher creates the virtual environment, installs dependencies on first use, starts the local server, and opens the app.
 
 ### Manual setup
 
@@ -65,11 +64,7 @@ python3 -m venv .venv
 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Then open the locally served interface at [http://127.0.0.1:8000](http://127.0.0.1:8000). The [hosted interface](https://mingchenxia.github.io/FindReferee/) remains available as a public landing page and may also connect directly in browsers that grant Local Network Access.
-
-### If the hosted page says “Local companion not connected”
-
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) directly while the launcher window remains open. If that page does not load, read the startup error preserved in the launcher window. A secure public page cannot override a browser decision to block access to a local HTTP service.
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 ## Using FindReferee
 
@@ -87,21 +82,21 @@ Copy `.env.example` values into your shell environment or launcher configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `AUTHOR_ATTRIBUTION_PROVIDER` | `auto` | Use `codex`, `api`, or automatically prefer Codex. |
 | `CODEX_MODEL` | `gpt-5.6-sol` | Default subscription model shown by the app. |
 | `CODEX_REASONING_EFFORT` | `xhigh` | `low`, `medium`, `high`, or `xhigh`. |
 | `CODEX_TIMEOUT_SECONDS` | `1200` | Guard for each individual Codex model call. |
 | `CODEX_CLI_PATH` | auto-detected | Explicit local Codex executable path. |
+| `OPENAI_API_KEY` | unset | Optional API fallback; not required for Codex subscription use. |
+| `OPENAI_MODEL` | `gpt-5-mini` | Model used by the optional API fallback. |
 | `AUTHOR_ATTRIBUTION_ADAPTIVE_ROUNDS` | `3` | Maximum targeted finalist rounds, from 0 to 4. |
 | `AUTHOR_ATTRIBUTION_PUBLIC_CORPUS` | `true` | Enable exact-name solo-work collection from arXiv. |
-| `FINDREFEREE_ALLOWED_ORIGINS` | unset | Optional comma-separated additional hosted frontend origins. |
 
-Model names must be available to the signed-in ChatGPT/Codex account. FindReferee never uses an OpenAI API key or API billing. If a subscription, quota, model-access, or authentication problem occurs, the app displays the Codex error in the interface.
+Model names must be available to the signed-in account or configured API project. If a subscription, quota, model-access, or authentication problem occurs, FindReferee displays the provider error in the interface.
 
 ## Privacy and data handling
 
 - The server binds to `127.0.0.1` by default.
-- The hosted page contains no model credential and performs no analysis by itself; it sends requests only to the companion on the same computer.
-- Browser requests are restricted to the official GitHub Pages origin and configured local origins. Mutating requests also require a random session token that changes whenever the companion restarts.
 - The app does not read, copy, or transmit Codex authentication files.
 - Uploaded files are held in memory for the active analysis and are not intentionally written to persistent app storage.
 - Private candidate corpora are sent to the selected model for that run, but are not used as public-search queries or shown as public citations.
