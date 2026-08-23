@@ -5,6 +5,17 @@ set -e
 APP_ROOT="${0:A:h}"
 cd "$APP_ROOT"
 
+show_startup_error() {
+  local status=$?
+  if (( status != 0 && status != 130 )); then
+    echo
+    echo "FindReferee could not start (error $status)."
+    echo "Keep this window open and copy the messages above when asking for help."
+    read -r "?Press Return to close."
+  fi
+}
+trap show_startup_error EXIT
+
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Python 3.10 or newer is required. Install Python, then double-click this launcher again."
   read -r "?Press Return to close."
@@ -36,12 +47,12 @@ if [[ "$REQUIREMENTS_DIGEST" != "$INSTALLED_DIGEST" ]]; then
 fi
 
 LOCAL_HEALTH_URL="http://127.0.0.1:8000/health"
-PUBLIC_APP_URL="https://mingchenxia.github.io/FindReferee/"
+LOCAL_APP_URL="http://127.0.0.1:8000/"
 if curl --silent --fail "$LOCAL_HEALTH_URL" >/dev/null 2>&1; then
-  open "$PUBLIC_APP_URL"
+  open "$LOCAL_APP_URL"
   exit 0
 fi
 
 echo "Starting FindReferee… Keep this window open while using the app."
-(sleep 1; open "$PUBLIC_APP_URL") &
-exec env CODEX_TIMEOUT_SECONDS=1200 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
+(sleep 1; open "$LOCAL_APP_URL") &
+env CODEX_TIMEOUT_SECONDS=1200 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000

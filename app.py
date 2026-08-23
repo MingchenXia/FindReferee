@@ -18,7 +18,6 @@ from uuid import uuid4
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from openai import OpenAI
 from pypdf import PdfReader
 
 from public_corpus import collect_arxiv_corpora, corpus_followup_section, corpus_prompt_section
@@ -43,8 +42,6 @@ MAX_UNDERLYING_CONTEXT_CHARS = 18_000
 MAX_REFERENCE_FILES_PER_AUTHOR = 8
 MAX_REFERENCE_CHARS_PER_AUTHOR = 45_000
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown", ".tex"}
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-MODEL_PROVIDER = os.getenv("AUTHOR_ATTRIBUTION_PROVIDER", "auto").lower()
 CODEX_MODEL = os.getenv("CODEX_MODEL", "gpt-5.6-sol")
 CODEX_REASONING_EFFORT = os.getenv("CODEX_REASONING_EFFORT", "xhigh")
 CODEX_ENABLE_SEARCH = os.getenv("CODEX_ENABLE_SEARCH", "true").lower() not in {"0", "false", "no"}
@@ -79,7 +76,7 @@ ALLOWED_BROWSER_ORIGINS = DEFAULT_BROWSER_ORIGINS | {
 }
 BROWSER_SESSION_TOKEN = secrets.token_urlsafe(32)
 
-app = FastAPI(title="FindReferee", version="1.1.0")
+app = FastAPI(title="FindReferee", version="1.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(ALLOWED_BROWSER_ORIGINS),
@@ -1278,12 +1275,6 @@ async def _read_upload(upload: UploadFile) -> dict[str, Any]:
     return {"name": filename, "text": text, "truncated": truncated, "metadata": metadata, "format": suffix.lstrip(".")}
 
 
-def _get_client() -> OpenAI:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured on the server.")
-    return OpenAI()
-
-
 def _codex_command() -> list[str] | None:
     """Find the local Codex executable without assuming a particular computer."""
     configured = os.getenv("CODEX_CLI_PATH", "").strip()
@@ -1429,77 +1420,23 @@ def _call_model(
     reasoning_effort: str | None = None,
     enable_search: bool | None = None,
 ) -> dict[str, Any]:
-    codex_error: Exception | None = None
-    if MODEL_PROVIDER in {"auto", "codex", "chatgpt"}:
-        if _codex_command():
-            try:
-                return _call_codex(
-                    instructions,
-                    user_input,
-                    schema,
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    enable_search=enable_search,
-                )
-            except Exception as exc:
-                codex_error = exc
-                if MODEL_PROVIDER in {"codex", "chatgpt"} or any(
-                    phrase in str(exc).lower()
-                    for phrase in ("no active chatgpt", "insufficient available tokens", "subscription")
-                ):
-                    raise HTTPException(status_code=502, detail=f"The ChatGPT subscription request failed: {exc}") from exc
-        elif MODEL_PROVIDER in {"codex", "chatgpt"}:
-            raise HTTPException(
-                status_code=503,
-                detail="Codex CLI was not found. Install Codex and sign in on this computer, or set CODEX_CLI_PATH.",
-            )
-
-    if MODEL_PROVIDER not in {"auto", "api"}:
-        raise HTTPException(status_code=502, detail=f"The ChatGPT subscription request failed: {codex_error}")
-
-    if MODEL_PROVIDER == "auto" and not os.getenv("OPENAI_API_KEY"):
-        if codex_error:
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "The signed-in Codex request failed, but the Codex executable was found. "
-                    f"Try again or choose a lower reasoning strength. Details: {codex_error}"
-                ),
-            ) from codex_error
+    del schema_name  # Codex receives the schema from a temporary local file.
+    if not _codex_command():
         raise HTTPException(
             status_code=503,
-            detail=(
-                "No active ChatGPT/Codex subscription is available on this computer. "
-                "Install Codex and sign in with an active ChatGPT account, or configure an OpenAI API key."
-            ),
+            detail="Codex CLI was not found. Install Codex and sign in with ChatGPT on this computer, or set CODEX_CLI_PATH.",
         )
-
-    client = _get_client()
     try:
-        response = client.responses.create(
-            model=model or DEFAULT_MODEL,
-            instructions=instructions,
-            input=user_input,
-            store=False,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": schema_name,
-                    "strict": True,
-                    "schema": schema,
-                }
-            },
+        return _call_codex(
+            instructions,
+            user_input,
+            schema,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            enable_search=enable_search,
         )
-        result = _json_from_model_output(response.output_text)
-        result["_provider"] = "openai-api"
-        result["_model"] = model or DEFAULT_MODEL
-        result["_reasoning_effort"] = reasoning_effort or CODEX_REASONING_EFFORT
-        return result
-    except HTTPException:
-        raise
     except Exception as exc:
-        message = _friendly_provider_error(str(exc))
-        raise HTTPException(status_code=502, detail=f"The model request failed: {message}") from exc
+        raise HTTPException(status_code=502, detail=f"The ChatGPT subscription request failed: {exc}") from exc
 
 
 def _without_internal_fields(result: dict[str, Any]) -> dict[str, Any]:
@@ -2052,19 +1989,18 @@ async def health() -> dict[str, str]:
 async def provider_status() -> dict[str, Any]:
     command = _codex_command()
     return {
-        "preference": MODEL_PROVIDER,
+        "preference": "codex",
         "default_model": CODEX_MODEL,
         "default_reasoning_effort": CODEX_REASONING_EFFORT,
         "review_passes": ANALYSIS_REVIEW_PASSES,
         "codex_available": command is not None,
         "codex_command": Path(command[0]).name if command else None,
-        "api_key_configured": bool(os.getenv("OPENAI_API_KEY")),
         "session_token": BROWSER_SESSION_TOKEN,
         "companion_version": app.version,
         "message": (
             "Automatic analyses will use the signed-in Codex account on this computer."
-            if command and MODEL_PROVIDER in {"auto", "codex", "chatgpt"}
-            else "Install Codex and sign in, or configure an API key."
+            if command
+            else "Install Codex and sign in with ChatGPT."
         ),
     }
 
@@ -2102,7 +2038,7 @@ Return strict JSON only matching the requested schema. Put source URLs in source
         selected_model,
         selected_effort,
     )
-    provider = result.pop("_provider", "openai-api")
+    provider = result.pop("_provider", "chatgpt-subscription-codex")
     selected_result_model = result.pop("_model", selected_model)
     selected_result_effort = result.pop("_reasoning_effort", selected_effort)
     result["provider"] = provider
@@ -2297,8 +2233,8 @@ async def _perform_analysis(
             followup_prompt,
             adjudication_source,
         )
-        provider = result.pop("_provider", "openai-api")
-        model = result.pop("_model", DEFAULT_MODEL)
+        provider = result.pop("_provider", "chatgpt-subscription-codex")
+        model = result.pop("_model", CODEX_MODEL)
         selected_effort_result = result.pop("_reasoning_effort", selected_effort)
         review_rounds = result.pop("_review_rounds", ANALYSIS_REVIEW_PASSES + 1) + discovery_review_rounds
         review_strategy = result.pop("_review_strategy", "multi-pass review")
@@ -2361,8 +2297,8 @@ async def _perform_analysis(
             progress,
             _feature_source_for_document(document),
         )
-        provider = result.pop("_provider", "openai-api")
-        model = result.pop("_model", DEFAULT_MODEL)
+        provider = result.pop("_provider", "chatgpt-subscription-codex")
+        model = result.pop("_model", CODEX_MODEL)
         selected_effort_result = result.pop("_reasoning_effort", selected_effort)
         review_rounds = result.pop("_review_rounds", ANALYSIS_REVIEW_PASSES + 1)
         review_strategy = result.pop("_review_strategy", "multi-pass review")
@@ -2392,8 +2328,8 @@ async def _perform_analysis(
         progress,
         comparison_feature_source,
     )
-    provider = result.pop("_provider", "openai-api")
-    model = result.pop("_model", DEFAULT_MODEL)
+    provider = result.pop("_provider", "chatgpt-subscription-codex")
+    model = result.pop("_model", CODEX_MODEL)
     selected_effort_result = result.pop("_reasoning_effort", selected_effort)
     review_rounds = result.pop("_review_rounds", ANALYSIS_REVIEW_PASSES + 1)
     review_strategy = result.pop("_review_strategy", "multi-pass review")
@@ -2556,60 +2492,3 @@ async def analysis_status(job_id: str) -> dict[str, Any]:
     if job.get("status") == "error":
         return {"status": "error", "stage": job.get("stage", "Analysis failed"), "clues": job.get("clues", []), "detail": job.get("error", "The analysis failed.")}
     return {"status": "running", "stage": job.get("stage", "Working"), "clues": job.get("clues", [])}
-
-
-@app.post("/api/prepare")
-async def prepare_for_chatgpt(
-    mode: str = Form("attribution"),
-    candidates: str = Form(""),
-    text_input: str = Form(""),
-    context_note: str = Form(""),
-    candidate_context: str = Form("{}"),
-    analysis_controls: str = Form("{}"),
-    model: str = Form(CODEX_MODEL),
-    reasoning_effort: str = Form(CODEX_REASONING_EFFORT),
-    reference_manifest: str = Form("[]"),
-    files: list[UploadFile] | None = File(default=None),
-    subject_file: UploadFile | None = File(default=None),
-    reference_files: list[UploadFile] | None = File(default=None),
-) -> dict[str, Any]:
-    """Prepare a prompt for a user to run manually in their ChatGPT subscription."""
-    documents = await _collect_documents(text_input, files)
-    underlying_document = await _collect_optional_document(subject_file)
-    candidate_list = _validate_request(mode, candidates, documents)
-    selected_model, selected_effort = _requested_model_settings(model, reasoning_effort)
-    controls = _parse_analysis_controls(analysis_controls)
-    if mode == "attribution":
-        candidate_profiles = _parse_candidate_context(candidate_context, candidate_list)
-        reference_corpus = await _collect_reference_corpus(reference_manifest, reference_files, candidate_list)
-        prompt = _attribution_prompt(candidate_list, documents[0], context_note, reference_corpus, candidate_profiles, controls, underlying_document)
-        instructions = "You are a cautious authorship-analysis assistant. Analyze writing style only. Return strict JSON only."
-    elif mode == "discovery":
-        reference_corpus = {}
-        prompt = _discovery_prompt(documents[0], context_note, controls)
-        instructions = "You are a cautious authorship-discovery assistant. Analyze writing style and public evidence only. Return strict JSON only."
-    else:
-        reference_corpus = {}
-        prompt = _comparison_prompt(documents, context_note, controls)
-        instructions = "You are a cautious authorship-comparison assistant. Analyze writing style only. Return strict JSON only."
-    return {
-        "mode": mode,
-        "prompt": f"{instructions}\n\n{prompt}",
-        "documents": [_document_metadata(document) for document in documents],
-        "underlying_document": _document_metadata(underlying_document) if underlying_document else None,
-        "reference_corpus": {
-            author: {"files": len(samples), "characters": sum(len(sample["text"]) for sample in samples)}
-            for author, samples in reference_corpus.items()
-        }
-        if mode == "attribution"
-        else {},
-        "private_corpus_note": (
-            "Private reference files are included only in the prepared prompt and are not intended for web-search queries."
-            if mode == "attribution" and reference_corpus
-            else "No private reference corpus was supplied."
-        ),
-        "analysis_note": ANALYSIS_NOTE,
-        "model": selected_model,
-        "reasoning_effort": selected_effort,
-        "analysis_controls": controls,
-    }
