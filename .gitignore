@@ -27,6 +27,7 @@ BEST_VERSION.md
 # User uploads and generated reports
 uploads/
 reports/
+tmp/
 author-analysis-*.json
 author-report-*.html
 
