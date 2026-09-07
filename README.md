@@ -83,7 +83,7 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 5. Choose a model and reasoning strength. The defaults are `gpt-5.6-sol` and `xhigh`.
 6. Select **Let's go!**.
 
-The result begins with an explicit determination status, the top probabilities, and total analysis time. The workflow targets 55 minutes and has a 60-minute hard budget: near the limit it stops additional focused rounds and broad searches, preserves time for adjudication, and can return the last complete review instead of losing the run. “Meaningfully separated leader” requires a stable multi-round lead plus at least two direct writing-evidence families. “Leading candidate, but not precise” reports a useful lead without claiming identification. “Unable to determine” is used when candidates remain close, evidence conflicts, an identity is unresolved, or someone outside the shortlist is at least as plausible as its leader. Expand the detailed report for language profile, candidate-by-candidate evidence, public sources, review-round snapshots, stylometry, metadata, limitations, and uncertainty notes.
+The result begins with an explicit determination status, the top probabilities, and total analysis time. The workflow targets 55 minutes; its 60-minute planning point is deliberately flexible, and default settings continue to schedule useful work for up to 90 minutes. It never kills a model call already in progress. If the provider times out before any complete report is available, the app still returns a structured report of received inputs and completed deterministic checks, clearly marked “Unable to determine.” “Meaningfully separated leader” requires a stable multi-round lead plus at least two direct writing-evidence families. “Leading candidate, but not precise” reports a useful lead without claiming identification. “Unable to determine” is used when candidates remain close, evidence conflicts, an identity is unresolved, or someone outside the shortlist is at least as plausible as its leader. Expand the detailed report for language profile, candidate-by-candidate evidence, public sources, review-round snapshots, stylometry, metadata, limitations, and uncertainty notes.
 
 ## Configuration
 
@@ -94,11 +94,12 @@ Copy `.env.example` to a local `.env` file (loaded automatically by the launcher
 | `AUTHOR_ATTRIBUTION_PROVIDER` | `auto` | Use `codex`, `api`, or automatically prefer Codex. |
 | `CODEX_MODEL` | `gpt-5.6-sol` | Default subscription model shown by the app. |
 | `CODEX_REASONING_EFFORT` | `xhigh` | `low`, `medium`, `high`, or `xhigh`. |
-| `CODEX_TIMEOUT_SECONDS` | `0` | Optional per-Codex-call guard in seconds. `0` (recommended) uses the current phase deadline and the 60-minute end-to-end budget, rather than terminating every call at 20 minutes. |
+| `CODEX_TIMEOUT_SECONDS` | `0` | Optional per-Codex-call guard in seconds. `0` (recommended) never kills an in-progress model call; phase and flexible planning budgets only control which optional work starts next. |
 | `CODEX_TIMEOUT_RETRIES` | `1` | Retry only a timed-out Codex call; login, quota, and other errors still fail immediately. |
 | `CODEX_TIMEOUT_RETRY_EFFORT` | `high` | Reasoning strength used for timeout recovery, while the first attempt keeps the user's selection. |
 | `AUTHOR_ATTRIBUTION_TARGET_SECONDS` | `3300` | Soft user-experience target (55 minutes); late optional rounds are skipped to protect adjudication time. |
-| `AUTHOR_ATTRIBUTION_HARD_SECONDS` | `3600` | End-to-end hard budget (60 minutes); the last complete review is retained if final adjudication reaches it. |
+| `AUTHOR_ATTRIBUTION_HARD_SECONDS` | `5400` | Extended planning budget (90 minutes by default). This is configurable above one hour; optional work is skipped near this point, but an in-progress model call is allowed to finish. |
+| `AUTHOR_ATTRIBUTION_JOB_TTL_SECONDS` | `14400` | How long a background result remains available to the browser; four hours by default. |
 | `CODEX_CLI_PATH` | auto-detected | Explicit local Codex executable path. |
 | `OPENAI_API_KEY` | unset | Optional API fallback; not required for Codex subscription use. |
 | `OPENAI_MODEL` | `gpt-5-mini` | Model used by the optional API fallback. |

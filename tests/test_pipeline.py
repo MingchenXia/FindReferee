@@ -156,7 +156,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("model_reasoning_effort=high", attempts[1])
         self.assertEqual(result["_reasoning_effort"], "xhigh (timeout recovery at high)")
 
-    def test_default_codex_timeout_uses_the_phase_deadline(self) -> None:
+    def test_default_codex_timeout_never_kills_an_in_progress_call(self) -> None:
         calls: list[dict[str, object]] = []
 
         def fake_run(args, **kwargs):
@@ -179,8 +179,56 @@ class PipelineTests(unittest.TestCase):
             )
 
         self.assertEqual(len(calls), 1)
-        self.assertGreater(float(calls[0]["timeout"]), 89)
-        self.assertLessEqual(float(calls[0]["timeout"]), 90)
+        self.assertIsNone(calls[0]["timeout"])
+
+    def test_timeout_returns_a_structured_report_with_received_evidence(self) -> None:
+        client = TestClient(app.app)
+        with patch.object(
+            app,
+            "_perform_analysis",
+            new=AsyncMock(side_effect=RuntimeError("Codex analysis timed out.")),
+        ):
+            response = client.post(
+                "/api/analyze",
+                data={
+                    "mode": "attribution",
+                    "candidates": "Jane Example\nAlex Sample",
+                    "text_input": "A target referee report with enough words to be treated as input evidence.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["determination"]["status"], "unable_to_determine")
+        self.assertEqual(payload["no_listed_candidate_probability"], 1.0)
+        self.assertEqual(len(payload["candidate_evaluations"]), 2)
+        self.assertTrue(payload["evidence"])
+        self.assertEqual(payload["documents"][0]["name"], "Pasted text")
+        self.assertTrue(payload["time_budget"]["fallback_used"])
+
+    def test_background_timeout_completes_with_the_same_safe_report(self) -> None:
+        with TestClient(app.app) as client:
+            with patch.object(
+                app,
+                "_perform_analysis",
+                new=AsyncMock(side_effect=RuntimeError("Codex analysis timed out.")),
+            ):
+                started = client.post(
+                    "/api/analyze/start",
+                    data={
+                        "mode": "comparison",
+                        "text_input": "First document text.",
+                    },
+                    files=[("files", ("second.txt", b"Second document text.", "text/plain"))],
+                )
+                job_id = started.json()["job_id"]
+                status = client.get(f"/api/analyze/status/{job_id}")
+
+        self.assertEqual(status.status_code, 200)
+        payload = status.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertTrue(payload["result"]["time_budget"]["fallback_used"])
+        self.assertEqual(payload["result"]["overall_same_author_probability"], 0.5)
 
     def test_final_timeout_returns_last_complete_review(self) -> None:
         feature_sheet = {

@@ -39,8 +39,9 @@ error fingerprint was verified.
 - Repeated spelling and grammar errors across independent solo works receive high
   weight. Isolated typos, coauthored prose, generic terminology, fame, and broad field
   overlap do not.
-- Optional phases stop at their phase deadlines; incomplete calls are discarded, the
-  last complete evidence packet is preserved, and analysis has a one-hour hard limit.
+- Optional phases stop being scheduled near their flexible planning deadlines; an in-progress
+  model call is never killed. If no complete report is available after a provider
+  timeout, the user still receives a structured safe non-determination report.
 - The user can disable named discovery outside the supplied candidate list while the
   unnamed no-listed-candidate probability remains available.
 
