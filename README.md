@@ -87,14 +87,14 @@ The result begins with an explicit determination status, the top probabilities, 
 
 ## Configuration
 
-Copy `.env.example` values into your shell environment or launcher configuration as needed. Important settings include:
+Copy `.env.example` to a local `.env` file (loaded automatically by the launcher), or export the values in your shell environment. Important settings include:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AUTHOR_ATTRIBUTION_PROVIDER` | `auto` | Use `codex`, `api`, or automatically prefer Codex. |
 | `CODEX_MODEL` | `gpt-5.6-sol` | Default subscription model shown by the app. |
 | `CODEX_REASONING_EFFORT` | `xhigh` | `low`, `medium`, `high`, or `xhigh`. |
-| `CODEX_TIMEOUT_SECONDS` | `1200` | Guard for each individual Codex model call. |
+| `CODEX_TIMEOUT_SECONDS` | `0` | Optional per-Codex-call guard in seconds. `0` (recommended) uses the current phase deadline and the 60-minute end-to-end budget, rather than terminating every call at 20 minutes. |
 | `CODEX_TIMEOUT_RETRIES` | `1` | Retry only a timed-out Codex call; login, quota, and other errors still fail immediately. |
 | `CODEX_TIMEOUT_RETRY_EFFORT` | `high` | Reasoning strength used for timeout recovery, while the first attempt keeps the user's selection. |
 | `AUTHOR_ATTRIBUTION_TARGET_SECONDS` | `3300` | Soft user-experience target (55 minutes); late optional rounds are skipped to protect adjudication time. |

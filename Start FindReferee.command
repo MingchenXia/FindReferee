@@ -43,4 +43,10 @@ fi
 
 echo "Starting FindReferee… Keep this window open while using the app."
 (sleep 1; open "$APP_URL") &
-exec env CODEX_TIMEOUT_SECONDS=1200 .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
+
+# A local .env is optional. When present, Uvicorn loads it before importing
+# the app, so timeout and model settings are honored instead of overwritten.
+if [[ -f .env ]]; then
+  exec .venv/bin/uvicorn --env-file .env app:app --host 127.0.0.1 --port 8000
+fi
+exec .venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000

@@ -156,6 +156,32 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("model_reasoning_effort=high", attempts[1])
         self.assertEqual(result["_reasoning_effort"], "xhigh (timeout recovery at high)")
 
+    def test_default_codex_timeout_uses_the_phase_deadline(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_run(args, **kwargs):
+            calls.append(kwargs)
+            output_path = Path(args[args.index("--output-last-message") + 1])
+            output_path.write_text("{}", encoding="utf-8")
+            return app.subprocess.CompletedProcess(args, 0, "", "")
+
+        with (
+            patch.object(app, "_codex_command", return_value=["codex"]),
+            patch.object(app, "CODEX_ENABLE_SEARCH", False),
+            patch.object(app, "CODEX_TIMEOUT_SECONDS", 0),
+            patch.object(app.subprocess, "run", side_effect=fake_run),
+        ):
+            app._call_codex(
+                "Instructions",
+                "Input",
+                {"type": "object", "additionalProperties": False, "properties": {}},
+                deadline_monotonic=app.time.monotonic() + 90,
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertGreater(float(calls[0]["timeout"]), 89)
+        self.assertLessEqual(float(calls[0]["timeout"]), 90)
+
     def test_final_timeout_returns_last_complete_review(self) -> None:
         feature_sheet = {
             "sample_diagnostics": "usable",
