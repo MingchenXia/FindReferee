@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import math
 import os
+import random
 import tempfile
+import threading
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -42,6 +47,27 @@ ATOM_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 class PublicCorpusTests(unittest.TestCase):
+    def test_arxiv_pacing_counts_time_already_spent_downloading(self) -> None:
+        for timeline, expected_sleep in (([100.0, 104.0, 105.0], None), ([100.0, 101.0, 102.0], 2.0)):
+            with self.subTest(timeline=timeline):
+                with (
+                    patch.object(public_corpus, "_query_author", return_value=(ATOM_FEED, False, None)),
+                    patch.object(
+                        public_corpus,
+                        "_paper_excerpt",
+                        return_value=({"text": "sample", "title": "t", "published": "2005"}, True),
+                    ),
+                    patch.object(public_corpus.time, "monotonic", side_effect=timeline),
+                    patch.object(public_corpus.time, "sleep") as sleep,
+                ):
+                    corpora, _ = public_corpus.collect_arxiv_corpora(["Jane Example", "Jane Example / J. Example"])
+                self.assertEqual(len(corpora["Jane Example"]), 1)
+                if expected_sleep is None:
+                    sleep.assert_not_called()
+                else:
+                    sleep.assert_called_once()
+                    self.assertAlmostEqual(sleep.call_args.args[0], expected_sleep)
+
     def test_followup_corpus_packet_is_compact_and_keeps_work_labels(self) -> None:
         corpora = {
             "Jane Example": [
@@ -1348,6 +1374,186 @@ class PipelineTests(unittest.TestCase):
         }
         identity = app._attribution_determination(ambiguous, direct)
         self.assertEqual(identity["status"], "unable_to_determine")
+
+
+class _FakePage:
+    def __init__(self, text: str | None) -> None:
+        self.text = text
+        self.calls = 0
+
+    def extract_text(self) -> str | None:
+        self.calls += 1
+        return self.text
+
+
+class EfficiencyTests(unittest.TestCase):
+    LEDGER = {
+        "sample_diagnostics": "usable",
+        "feature_ledger": [{"category": "error_pattern", "observation": "Repeated 'teh' spelling."}],
+        "most_discriminative_features": [],
+        "features_that_should_be_discounted": [],
+    }
+
+    def _fake_model(self, calls: list[tuple[str, bool | None, str]], ledger_started: threading.Event | None = None):
+        def fake(*args, **kwargs):
+            schema_name = args[2]
+            calls.append((schema_name, kwargs.get("enable_search"), args[1]))
+            if schema_name == "observable_feature_ledger":
+                if ledger_started is not None:
+                    ledger_started.set()
+                return dict(self.LEDGER)
+            if schema_name == "author_discovery":
+                return {
+                    "summary": "Shortlist.",
+                    "discovered_candidates": [
+                        {"candidate": "Alice Author", "probability": 0.6},
+                        {"candidate": "Bob Writer", "probability": 0.4},
+                    ],
+                    "research_sources": [],
+                    "limitations": [],
+                }
+            return {
+                "summary": "Report.",
+                "confidence": "low",
+                "no_listed_candidate_probability": 0.1,
+                "candidate_evaluations": [
+                    {"candidate": "Alice Author", "probability": 0.5},
+                    {"candidate": "Bob Writer", "probability": 0.4},
+                ],
+                "limitations": [],
+            }
+
+        return fake
+
+    def _run_attribution(self, candidates: list[str]) -> dict:
+        document = {
+            "name": "report.txt",
+            "text": "The authors should clarify the main estimate. " * 12,
+            "metadata": {},
+            "format": "text",
+            "truncated": False,
+        }
+        return asyncio.run(
+            app._perform_analysis(
+                "attribution", candidates, [document], "", {}, {}, "gpt-test", "high", {}
+            )
+        )
+
+    def test_partial_pdf_extraction_trims_identically(self) -> None:
+        generator = random.Random(3)
+        for trial in range(80):
+            pages = []
+            for _ in range(generator.randint(0, 60)):
+                kind = generator.random()
+                if kind < 0.08:
+                    pages.append(_FakePage(None))
+                elif kind < 0.16:
+                    pages.append(_FakePage(" \n\t "))
+                else:
+                    body = "".join(generator.choices("ab c\n\x00.", k=generator.randint(0, 6_000)))
+                    pages.append(_FakePage(body))
+            full = "\n\n".join(page.text or "" for page in pages)
+            with self.subTest(trial=trial):
+                self.assertEqual(app._trim(app._extract_pdf_text(pages)), app._trim(full))
+
+    def test_partial_pdf_extraction_skips_discarded_middle_pages(self) -> None:
+        pages = [_FakePage(f"Page {index} " + "word " * 700) for index in range(120)]
+        full = "\n\n".join(page.text for page in pages)
+        self.assertEqual(app._trim(app._extract_pdf_text(pages)), app._trim(full))
+        self.assertLess(sum(page.calls for page in pages), 30)
+
+    def test_feature_ledger_runs_once_across_discovery_and_attribution(self) -> None:
+        for parallel in (True, False):
+            calls: list[tuple[str, bool | None, str]] = []
+            with self.subTest(parallel=parallel):
+                with (
+                    patch.object(app, "PARALLEL_PREFETCH_ENABLED", parallel),
+                    patch.object(app, "CITATION_NETWORK_ENABLED", False),
+                    patch.object(app, "PUBLIC_CORPUS_ENABLED", False),
+                    patch.object(app, "ANALYSIS_REVIEW_PASSES", 1),
+                    patch.object(app, "ADAPTIVE_MAX_TARGETED_ROUNDS", 0),
+                    patch.object(app, "_call_model", side_effect=self._fake_model(calls)),
+                ):
+                    result = self._run_attribution([])
+                schemas = [schema for schema, _, _ in calls]
+                self.assertEqual(schemas.count("observable_feature_ledger"), 1)
+                self.assertEqual(schemas.count("author_discovery"), 2)
+                self.assertEqual(schemas.count("author_attribution"), 2)
+                # Two discovery rounds, two attribution rounds, and one shared ledger.
+                self.assertEqual(result["review_rounds"], 5)
+                self.assertEqual(result["candidate_evaluations"][0]["candidate"], "Alice Author")
+
+    def test_feature_ledger_prefetch_overlaps_citation_tracing(self) -> None:
+        calls: list[tuple[str, bool | None, str]] = []
+        ledger_started = threading.Event()
+        overlapped: list[bool] = []
+
+        def slow_citation_network(*_args, **_kwargs):
+            # Only a concurrently running ledger call can release this wait early.
+            overlapped.append(ledger_started.wait(5))
+            return {"available": False, "reason": "Citation lookup skipped in test."}
+
+        with (
+            patch.object(app, "PARALLEL_PREFETCH_ENABLED", True),
+            patch.object(app, "CITATION_NETWORK_ENABLED", True),
+            patch.object(app, "PUBLIC_CORPUS_ENABLED", False),
+            patch.object(app, "ANALYSIS_REVIEW_PASSES", 1),
+            patch.object(app, "ADAPTIVE_MAX_TARGETED_ROUNDS", 0),
+            patch.object(app, "collect_citation_network", side_effect=slow_citation_network),
+            patch.object(app, "_call_model", side_effect=self._fake_model(calls, ledger_started)),
+        ):
+            result = self._run_attribution(["Alice Author", "Bob Writer"])
+        self.assertEqual(overlapped, [True])
+        self.assertEqual([schema for schema, _, _ in calls].count("observable_feature_ledger"), 1)
+        self.assertEqual(result["review_rounds"], 3)
+
+    def test_candidate_research_searches_without_a_writing_feature_ledger(self) -> None:
+        calls: list[tuple[str, bool | None, str]] = []
+        with (
+            patch.object(app, "ANALYSIS_REVIEW_PASSES", 1),
+            patch.object(app, "_call_model", side_effect=self._fake_model(calls)),
+        ):
+            result = app._multi_pass_model(
+                "Instructions", "Research prompt", "candidate_background_research", {}, "gpt-test", "high"
+            )
+        self.assertEqual([schema for schema, _, _ in calls], ["candidate_background_research"] * 2)
+        self.assertTrue(calls[0][1], "The research round must be allowed to use live search.")
+        self.assertNotIn("Neutral observable feature ledger", calls[0][2])
+        self.assertNotIn("Neutral observable feature ledger", calls[1][2])
+        self.assertEqual(result["_review_rounds"], 2)
+        self.assertNotIn("feature ledger", result["_review_strategy"])
+
+    def test_precomputed_feature_ledger_is_reused_in_every_round(self) -> None:
+        calls: list[tuple[str, bool | None, str]] = []
+        with (
+            patch.object(app, "ANALYSIS_REVIEW_PASSES", 1),
+            patch.object(app, "ADAPTIVE_MAX_TARGETED_ROUNDS", 0),
+            patch.object(app, "_call_model", side_effect=self._fake_model(calls)),
+        ):
+            result = app._multi_pass_model(
+                "Instructions",
+                "Prompt",
+                "author_attribution",
+                {},
+                "gpt-test",
+                "high",
+                feature_sheet=dict(self.LEDGER),
+            )
+        self.assertEqual([schema for schema, _, _ in calls], ["author_attribution"] * 2)
+        self.assertTrue(all("Repeated 'teh' spelling." in prompt for _, _, prompt in calls))
+        self.assertEqual(result["_review_rounds"], 2)
+
+    def test_profile_cosine_matches_the_direct_formula(self) -> None:
+        generator = random.Random(5)
+        for _ in range(50):
+            left = Counter({generator.choice("abcdefgh") * 3: generator.randint(1, 9) for _ in range(12)})
+            right = Counter({generator.choice("abcdefghij") * 3: generator.randint(1, 9) for _ in range(20)})
+            direct = sum(left[key] * right[key] for key in left.keys() & right.keys()) / (
+                math.sqrt(sum(value * value for value in left.values()))
+                * math.sqrt(sum(value * value for value in right.values()))
+            )
+            self.assertEqual(stylometry._cosine(left, right), direct)
+        self.assertEqual(stylometry._cosine(Counter(), Counter({"abc": 1})), 0.0)
 
 
 if __name__ == "__main__":

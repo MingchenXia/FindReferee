@@ -29,16 +29,43 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+_NGRAM_WIDTHS = (3, 4, 5)
+# A character n-gram profile paired with its Euclidean norm, so the norm of a
+# profile that is compared many times (the target) is computed only once.
+_Profile = tuple[Counter[str], float]
+
+
+def _ngram_counts(normalized: str, width: int) -> Counter[str]:
+    return Counter(normalized[index : index + width] for index in range(max(0, len(normalized) - width + 1)))
+
+
 def _ngrams(text: str, width: int) -> Counter[str]:
-    value = _normalized(text)
-    return Counter(value[index : index + width] for index in range(max(0, len(value) - width + 1)))
+    return _ngram_counts(_normalized(text), width)
+
+
+def _profile(counts: Counter[str]) -> _Profile:
+    return counts, math.sqrt(sum(value * value for value in counts.values()))
+
+
+def _ngram_profiles(text: str) -> dict[int, _Profile]:
+    """Normalize a text once and build every character n-gram view from it."""
+    normalized = _normalized(text)
+    return {width: _profile(_ngram_counts(normalized, width)) for width in _NGRAM_WIDTHS}
+
+
+def _profile_cosine(left: _Profile, right: _Profile) -> float:
+    left_counts, left_norm = left
+    right_counts, right_norm = right
+    if not left_norm or not right_norm:
+        return 0.0
+    # Integer dot product: iterating the smaller profile gives the exact same value.
+    small, large = (left_counts, right_counts) if len(left_counts) <= len(right_counts) else (right_counts, left_counts)
+    numerator = sum(value * large.get(key, 0) for key, value in small.items())
+    return numerator / (left_norm * right_norm)
 
 
 def _cosine(left: Counter[str], right: Counter[str]) -> float:
-    numerator = sum(left[key] * right[key] for key in left.keys() & right.keys())
-    left_norm = math.sqrt(sum(value * value for value in left.values()))
-    right_norm = math.sqrt(sum(value * value for value in right.values()))
-    return numerator / (left_norm * right_norm) if left_norm and right_norm else 0.0
+    return _profile_cosine(_profile(left), _profile(right))
 
 
 def _word_frequencies(text: str) -> Counter[str]:
@@ -62,15 +89,16 @@ def _length_matched_character_scores(
     target: str,
     texts: dict[str, list[str]],
     target_word_count: int,
+    target_profile: _Profile | None = None,
 ) -> dict[str, dict[str, float | int]]:
     """Compare very short targets with equally sized public-corpus windows."""
     width = max(40, target_word_count)
-    target_profile = _ngrams(target, 4)
+    target_profile = target_profile or _profile(_ngrams(target, 4))
     output: dict[str, dict[str, float | int]] = {}
     for candidate, papers in texts.items():
         scores = sorted(
             (
-                _cosine(target_profile, _ngrams(window, 4))
+                _profile_cosine(target_profile, _profile(_ngrams(window, 4)))
                 for paper in papers
                 for window in _distributed_word_windows(paper, width)
             ),
@@ -89,6 +117,41 @@ def _length_matched_character_scores(
     return output
 
 
+def _most_frequent_words(samples: list[tuple[str, Counter[str]]], feature_count: int) -> list[str]:
+    aggregate: Counter[str] = Counter()
+    for _, frequencies in samples:
+        aggregate.update(frequencies)
+    return [word for word, _ in aggregate.most_common(feature_count)]
+
+
+def _burrows_from_frequencies(
+    target_frequencies: Counter[str],
+    samples: list[tuple[str, Counter[str]]],
+    features: list[str],
+) -> dict[str, float]:
+    """Burrows-style Delta over precomputed relative word frequencies."""
+    if not samples:
+        return {}
+    means = {word: sum(freq[word] for _, freq in samples) / len(samples) for word in features}
+    deviations: dict[str, float] = {}
+    for word in features:
+        variance = sum((freq[word] - means[word]) ** 2 for _, freq in samples) / len(samples)
+        deviations[word] = math.sqrt(variance) or 1.0
+    target_z = {word: (target_frequencies[word] - means[word]) / deviations[word] for word in features}
+    grouped: dict[str, list[Counter[str]]] = {}
+    for label, frequencies in samples:
+        grouped.setdefault(label, []).append(frequencies)
+    distances: dict[str, float] = {}
+    for candidate, candidate_samples in grouped.items():
+        centroid = {
+            word: sum((freq[word] - means[word]) / deviations[word] for freq in candidate_samples)
+            / len(candidate_samples)
+            for word in features
+        }
+        distances[candidate] = sum(abs(target_z[word] - centroid[word]) for word in features) / len(features)
+    return distances
+
+
 def _burrows_distances(
     target: str,
     texts: dict[str, list[str]],
@@ -99,29 +162,8 @@ def _burrows_distances(
     samples = [(candidate, _word_frequencies(text)) for candidate, values in texts.items() for text in values]
     if not samples:
         return {}
-    aggregate: Counter[str] = Counter()
-    for _, frequencies in samples:
-        aggregate.update(frequencies)
-    features = fixed_features or [word for word, _ in aggregate.most_common(feature_count)]
-    means = {word: sum(freq[word] for _, freq in samples) / len(samples) for word in features}
-    deviations: dict[str, float] = {}
-    for word in features:
-        variance = sum((freq[word] - means[word]) ** 2 for _, freq in samples) / len(samples)
-        deviations[word] = math.sqrt(variance) or 1.0
-    target_frequencies = _word_frequencies(target)
-    target_z = {word: (target_frequencies[word] - means[word]) / deviations[word] for word in features}
-    distances: dict[str, float] = {}
-    for candidate in texts:
-        candidate_samples = [freq for label, freq in samples if label == candidate]
-        if not candidate_samples:
-            continue
-        centroid = {
-            word: sum((freq[word] - means[word]) / deviations[word] for freq in candidate_samples)
-            / len(candidate_samples)
-            for word in features
-        }
-        distances[candidate] = sum(abs(target_z[word] - centroid[word]) for word in features) / len(features)
-    return distances
+    features = fixed_features or _most_frequent_words(samples, feature_count)
+    return _burrows_from_frequencies(_word_frequencies(target), samples, features)
 
 
 def build_stylometry_diagnostics(
@@ -141,11 +183,19 @@ def build_stylometry_diagnostics(
             "reason": "At least two populated candidate corpora and a 40-word target are required.",
         }
     texts = {candidate: [str(sample["text"]) for sample in samples] for candidate, samples in usable.items()}
-    target_profiles = {width: _ngrams(target_text, width) for width in (3, 4, 5)}
-    burrows = _burrows_distances(target_text, texts)
-    function_delta = _burrows_distances(target_text, texts, fixed_features=FUNCTION_WORDS)
+    # Each text is normalized, n-grammed, and word-counted exactly once; both
+    # Delta views share the same relative word frequencies.
+    target_profiles = _ngram_profiles(target_text)
+    target_frequencies = _word_frequencies(target_text)
+    sample_frequencies = [
+        (candidate, _word_frequencies(text)) for candidate, values in texts.items() for text in values
+    ]
+    burrows = _burrows_from_frequencies(
+        target_frequencies, sample_frequencies, _most_frequent_words(sample_frequencies, 160)
+    )
+    function_delta = _burrows_from_frequencies(target_frequencies, sample_frequencies, FUNCTION_WORDS)
     length_matched = (
-        _length_matched_character_scores(target_text, texts, word_count)
+        _length_matched_character_scores(target_text, texts, word_count, target_profiles[4])
         if word_count < 200
         else {}
     )
@@ -153,8 +203,8 @@ def build_stylometry_diagnostics(
     for candidate, samples in usable.items():
         paper_scores = []
         for sample in samples:
-            profiles = {width: _ngrams(str(sample["text"]), width) for width in (3, 4, 5)}
-            similarity = sum(_cosine(target_profiles[width], profiles[width]) for width in profiles) / 3
+            profiles = _ngram_profiles(str(sample["text"]))
+            similarity = sum(_profile_cosine(target_profiles[width], profiles[width]) for width in profiles) / 3
             paper_scores.append(
                 {
                     "title": str(sample.get("title") or sample.get("name") or "Untitled sample"),

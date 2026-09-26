@@ -123,27 +123,33 @@ _FEATURE_WEIGHTS = {
 }
 
 
+# One precompiled alternation per feature scans the text once instead of once
+# per pattern. Patterns inside a feature never match overlapping spans, so the
+# match count equals the sum of the individual pattern counts.
+_FEATURE_REGEXES = {
+    name: re.compile("|".join(f"(?:{pattern})" for pattern in patterns), re.IGNORECASE)
+    for name, patterns in _PATTERNS.items()
+}
+_WORD = re.compile(r"[A-Za-z]+(?:['’-][A-Za-z]+)*")
+
+
 def _sentences(text: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", text) if part.strip()]
 
 
-def _pattern_count(text: str, patterns: tuple[str, ...]) -> int:
-    return sum(len(re.findall(pattern, text, flags=re.IGNORECASE)) for pattern in patterns)
-
-
 def extract_review_voice(text: str) -> dict[str, Any]:
     """Return normalized, inspectable report-voice features for one sample."""
-    words = re.findall(r"[A-Za-z]+(?:['’-][A-Za-z]+)*", text)
+    words = _WORD.findall(text)
     sentences = _sentences(text)
     paragraphs = [part for part in re.split(r"\n\s*\n|\r\n\s*\r\n", text) if part.strip()]
     word_count = len(words)
     sentence_count = max(1, len(sentences))
     per_hundred = max(1.0, word_count / 100.0)
     raw_rates = {
-        name: _pattern_count(text, patterns) / per_hundred
-        for name, patterns in _PATTERNS.items()
+        name: len(regex.findall(text)) / per_hundred
+        for name, regex in _FEATURE_REGEXES.items()
     }
-    lengths = [len(re.findall(r"[A-Za-z]+(?:['’-][A-Za-z]+)*", sentence)) for sentence in sentences]
+    lengths = [len(_WORD.findall(sentence)) for sentence in sentences]
     lengths = [value for value in lengths if value]
     mean_sentence = sum(lengths) / len(lengths) if lengths else 0.0
     sentence_variation = pstdev(lengths) if len(lengths) > 1 else 0.0

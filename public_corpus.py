@@ -24,6 +24,7 @@ ARXIV_HOSTS = {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}
 USER_AGENT = "AuthorAttribution/0.1 (local noncommercial research tool)"
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 QUERY_CACHE_SECONDS = 7 * 24 * 60 * 60
+ARXIV_QUERY_INTERVAL_SECONDS = 3.0
 MAX_PDF_BYTES = 12 * 1024 * 1024
 MAX_EXCERPT_CHARS = 7_000
 PROMPT_EXCERPT_CHARS = max(
@@ -243,15 +244,19 @@ def collect_arxiv_corpora(
     """
     corpora: dict[str, list[dict[str, Any]]] = {label: [] for label in candidate_labels}
     diagnostics: dict[str, Any] = {"provider": "arXiv public API", "candidates": {}, "errors": []}
-    previous_live_query = False
+    last_live_query_at: float | None = None
     for label in candidate_labels:
         if progress:
             progress(f"Collecting public solo works for {label}", None)
         try:
-            if previous_live_query:
-                time.sleep(3)
+            if last_live_query_at is not None:
+                # arXiv asks for three seconds between API queries. Time spent
+                # downloading the previous candidate's PDFs already counts.
+                remaining = ARXIV_QUERY_INTERVAL_SECONDS - (time.monotonic() - last_live_query_at)
+                if remaining > 0:
+                    time.sleep(remaining)
             payload, query_cached, query_warning = _query_author(label, max_results_per_candidate)
-            previous_live_query = not query_cached
+            last_live_query_at = None if query_cached else time.monotonic()
             records = _parse_entries(payload, label)
             selected = _distributed_selection(records, max_full_text_papers_per_candidate)
             samples = []

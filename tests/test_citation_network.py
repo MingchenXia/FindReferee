@@ -190,5 +190,48 @@ class CitationNetworkTests(unittest.TestCase):
         self.assertEqual(checked_author_ids, {"LISTED"})
 
 
+    def test_label_index_keeps_first_label_for_a_shared_graph_key(self) -> None:
+        index = citation_network._label_index(["Marta Lewicka/M. Lewicka", "M. Lewicka", "Wentao Cao"])
+        self.assertEqual(index["lewicka:m"], "Marta Lewicka/M. Lewicka")
+        self.assertEqual(index["cao:w"], "Wentao Cao")
+
+    def test_api_pacing_is_skipped_only_for_cached_responses(self) -> None:
+        subject = {
+            "paperId": "SUBJECT",
+            "title": "A manuscript",
+            "year": 2025,
+            "authors": [{"authorId": "SUBJECT-AUTHOR", "name": "Paper Author"}],
+        }
+        direct_rows = [
+            {
+                "isInfluential": False,
+                "citedPaper": {
+                    "paperId": f"SEED-{index}",
+                    "title": f"Seed {index}",
+                    "year": 2020,
+                    "authors": [{"authorId": f"A{index}", "name": f"Person Number{index}"}],
+                },
+            }
+            for index in range(3)
+        ]
+
+        def references(paper_id: str, _limit: int):
+            return direct_rows if paper_id == "SUBJECT" else []
+
+        for cached in (True, False):
+            with self.subTest(cached=cached):
+                with (
+                    patch.object(citation_network, "_resolve_subject", return_value=subject),
+                    patch.object(citation_network, "_reference_rows", side_effect=references),
+                    patch.object(citation_network, "_candidate_coauthorship_conflicts", return_value=([], [])),
+                    patch.object(citation_network, "_served_from_cache", return_value=cached),
+                    patch.object(citation_network.time, "sleep") as sleep,
+                ):
+                    result = citation_network.collect_citation_network(
+                        None, "arXiv:2501.00001", ["Person Number1"]
+                    )
+                self.assertTrue(result["available"])
+                self.assertEqual(sleep.called, not cached)
+
 if __name__ == "__main__":
     unittest.main()

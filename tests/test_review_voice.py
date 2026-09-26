@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 
 import review_voice
@@ -50,6 +51,28 @@ class ReviewVoiceTests(unittest.TestCase):
         self.assertEqual(result["metric_leader"], "Candidate A")
         self.assertGreater(result["leader_separation"], 0.035)
 
+
+    def test_single_pass_feature_counts_equal_per_pattern_counts(self) -> None:
+        phrases = (
+            "I my me we our us the author the authors the manuscript the paper the article may might could "
+            "seem seems appear appears perhaps possibly in my view in my opinion in my judgment in my judgement "
+            "interesting important novel valuable useful clear clearly well-written well written improvement "
+            "concern concerns problem problems issue issues flaw flaws incorrect insufficient not clear "
+            "not convincing not enough not new not original not correct not suitable lack lacks weak weakness "
+            "weaknesses recommend recommendation recommended recommending accept acceptance accepted reject "
+            "rejection rejected publish publishable published publishing suitable for journal major revision "
+            "minor revision should must need to needs to needed to I suggest I ask I encourage it would be "
+            "useful it would be helpful it would be better however nevertheless although while on the other "
+            "hand but reference references cite cited cites citation citations literature previous work"
+        )
+        text = "\n".join(
+            [phrases, phrases.upper(), phrases.replace(" ", ", "), "Clearly; the authors (i) must... I? Me!"]
+        )
+        for name, patterns in review_voice._PATTERNS.items():
+            with self.subTest(feature=name):
+                expected = sum(len(re.findall(pattern, text, flags=re.IGNORECASE)) for pattern in patterns)
+                self.assertGreater(expected, 0)
+                self.assertEqual(len(review_voice._FEATURE_REGEXES[name].findall(text)), expected)
 
 if __name__ == "__main__":
     unittest.main()

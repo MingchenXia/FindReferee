@@ -108,12 +108,24 @@ def _cache_path(url: str) -> Path:
     return _cache_root() / f"{digest}.json"
 
 
+def _cache_is_fresh(cache_path: Path) -> bool:
+    return cache_path.is_file() and time.time() - cache_path.stat().st_mtime < CACHE_SECONDS
+
+
+def _served_from_cache(url: str) -> bool:
+    """Tell whether a request will be answered locally, so API pacing can be skipped."""
+    try:
+        return _cache_is_fresh(_cache_path(url))
+    except OSError:
+        return False
+
+
 def _request_json(url: str, *, timeout: int = 25) -> dict[str, Any]:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https" or (parsed.hostname or "").casefold() != API_HOST:
         raise ValueError("Only the official Semantic Scholar HTTPS API is allowed.")
     cache_path = _cache_path(url)
-    if cache_path.is_file() and time.time() - cache_path.stat().st_mtime < CACHE_SECONDS:
+    if _cache_is_fresh(cache_path):
         return json.loads(cache_path.read_text(encoding="utf-8"))
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip()
@@ -208,16 +220,22 @@ def _resolve_subject(document: dict[str, Any] | None, context_note: str) -> dict
     return best
 
 
-def _reference_rows(paper_id: str, limit: int) -> list[dict[str, Any]]:
-    payload = _request_json(
-        _api_url(
-            f"paper/{paper_id}/references",
-            {
-                "limit": limit,
-                "fields": "title,year,authors,isInfluential",
-            },
-        )
+def _references_url(paper_id: str, limit: int) -> str:
+    return _api_url(
+        f"paper/{paper_id}/references",
+        {
+            "limit": limit,
+            "fields": "title,year,authors,isInfluential",
+        },
     )
+
+
+def _author_papers_url(author_id: str) -> str:
+    return _api_url(f"author/{author_id}/papers", {"limit": 1000, "fields": "title,year,authors"})
+
+
+def _reference_rows(paper_id: str, limit: int) -> list[dict[str, Any]]:
+    payload = _request_json(_references_url(paper_id, limit))
     return payload.get("data") if isinstance(payload.get("data"), list) else []
 
 
@@ -281,11 +299,13 @@ def _add_author_evidence(
             )
 
 
-def _listed_label_for_key(key: str, candidate_labels: list[str]) -> str | None:
+def _label_index(candidate_labels: list[str]) -> dict[str, str]:
+    """Map every graph identity key to the first supplied label that owns it."""
+    index: dict[str, str] = {}
     for label in candidate_labels:
-        if key in _label_keys(label):
-            return label
-    return None
+        for key in _label_keys(label):
+            index.setdefault(key, label)
+    return index
 
 
 def _candidate_coauthorship_conflicts(
@@ -297,13 +317,7 @@ def _candidate_coauthorship_conflicts(
     warnings: list[str] = []
     for author_id in sorted(author_ids)[:2]:
         try:
-            payload = _request_json(
-                _api_url(
-                    f"author/{author_id}/papers",
-                    {"limit": 1000, "fields": "title,year,authors"},
-                ),
-                timeout=35,
-            )
+            payload = _request_json(_author_papers_url(author_id), timeout=35)
         except Exception as exc:
             warnings.append(f"Could not verify prior coauthorship for author ID {author_id}: {exc}")
             continue
@@ -416,6 +430,7 @@ def collect_citation_network(
         seed_id = str(seed.get("paperId", ""))
         if not seed_id:
             continue
+        cached = _served_from_cache(_references_url(seed_id, MAX_SECOND_ORDER_REFERENCES_PER_SEED))
         try:
             second_rows = _reference_rows(seed_id, MAX_SECOND_ORDER_REFERENCES_PER_SEED)
         except Exception as exc:
@@ -435,18 +450,20 @@ def collect_citation_network(
                 influential=bool(second_row.get("isInfluential")),
                 seed_title=str(seed.get("title", "")),
             )
-        if index + 1 < len(direct_seed_rows):
+        # Pace only live API traffic; locally cached responses need no delay.
+        if index + 1 < len(direct_seed_rows) and not cached:
             time.sleep(0.15)
     for key in list(ledger):
         if key in subject_author_keys:
             ledger.pop(key, None)
     items = list(ledger.values())
+    label_by_key = _label_index(candidate_labels)
     for item in items:
         item["raw_prior_score"] = (
             DIRECT_WEIGHT * float(item["direct_score"])
             + SECOND_ORDER_WEIGHT * float(item["second_order_score"])
         )
-        item["listed_candidate"] = _listed_label_for_key(item["identity_key"], candidate_labels)
+        item["listed_candidate"] = label_by_key.get(item["identity_key"])
         item["prepublication_coauthor_conflict"] = None
         item["prepublication_coauthor_papers"] = []
         item["relationship_multiplier"] = 1.0
@@ -454,17 +471,22 @@ def collect_citation_network(
     items.sort(key=lambda item: float(item["raw_prior_score"]), reverse=True)
     relationship_targets = [item for item in items if item.get("listed_candidate")]
     if include_outside_candidates:
-        relationship_targets += [item for item in items if item not in relationship_targets]
+        relationship_targets += [item for item in items if not item.get("listed_candidate")]
     for item in relationship_targets[:MAX_CANDIDATE_RELATIONSHIP_LOOKUPS]:
+        author_ids = set(item["semantic_scholar_author_ids"])
+        cached = all(
+            _served_from_cache(_author_papers_url(author_id)) for author_id in sorted(author_ids)[:2]
+        )
         conflicts, warnings = _candidate_coauthorship_conflicts(
-            set(item["semantic_scholar_author_ids"]), subject_author_keys, subject_year
+            author_ids, subject_author_keys, subject_year
         )
         diagnostics["warnings"].extend(warnings)
         item["prepublication_coauthor_conflict"] = bool(conflicts)
         item["prepublication_coauthor_papers"] = conflicts
         if conflicts:
             item["relationship_multiplier"] = PREPUBLICATION_COAUTHOR_MULTIPLIER
-        time.sleep(0.1)
+        if not cached:
+            time.sleep(0.1)
     for item in items:
         item["adjusted_prior_score"] = float(item["raw_prior_score"]) * float(
             item["relationship_multiplier"]
@@ -508,20 +530,24 @@ def collect_citation_network(
         "Initial-plus-surname variants are provisionally grouped for graph counting only; source verification "
         "is required before treating them as one person."
     )
+    best_item_by_label: dict[str, dict[str, Any]] = {}
+    for item in items:
+        if item.get("listed_candidate"):
+            best_item_by_label.setdefault(item["listed_candidate"], item)
     for label in candidate_labels:
-        matches = [item for item in items if item.get("listed_candidate") == label]
+        match = best_item_by_label.get(label)
         diagnostics["listed_candidates"][label] = (
             {
                 "found_in_network": True,
-                "citation_prior_index": matches[0]["citation_prior_index"],
-                "direct_cited_papers": len(matches[0]["direct_papers"]),
-                "second_order_papers": len(matches[0]["second_order_papers"]),
-                "prepublication_coauthor_conflict": matches[0]["prepublication_coauthor_conflict"],
-                "prepublication_coauthor_papers": matches[0]["prepublication_coauthor_papers"],
-                "relationship_multiplier": matches[0]["relationship_multiplier"],
-                "advisor_or_student_relationship": matches[0]["advisor_or_student_relationship"],
+                "citation_prior_index": match["citation_prior_index"],
+                "direct_cited_papers": len(match["direct_papers"]),
+                "second_order_papers": len(match["second_order_papers"]),
+                "prepublication_coauthor_conflict": match["prepublication_coauthor_conflict"],
+                "prepublication_coauthor_papers": match["prepublication_coauthor_papers"],
+                "relationship_multiplier": match["relationship_multiplier"],
+                "advisor_or_student_relationship": match["advisor_or_student_relationship"],
             }
-            if matches
+            if match
             else {
                 "found_in_network": False,
                 "citation_prior_index": 0.0,
