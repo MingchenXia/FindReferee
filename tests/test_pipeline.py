@@ -1755,6 +1755,35 @@ class AnalysisOrchestrationTests(unittest.TestCase):
                     self.assertEqual(fingerprint["leader"], "Alice Author")
                     self.assertTrue(any('"occured"' in prompt for _, _, prompt in calls))
 
+    def test_probability_calibration_is_guarded_and_order_preserving(self) -> None:
+        def result() -> dict:
+            return {
+                "candidate_evaluations": [
+                    {"candidate": "A", "probability": 0.75},
+                    {"candidate": "B", "probability": 0.2},
+                ],
+                "no_listed_candidate_probability": 0.05,
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "calibration.json"
+            with patch.object(app, "CALIBRATION_FILE", ""):
+                self.assertFalse(app._probability_calibration(result(), "gpt-test")["applied"])
+            with patch.object(app, "CALIBRATION_FILE", str(path)):
+                path.write_text('{"temperature": 2.0, "case_count": 4, "model": "gpt-test"}', encoding="utf-8")
+                self.assertIn("at least 20", app._probability_calibration(result(), "gpt-test")["reason"])
+                path.write_text('{"temperature": 2.0, "case_count": 30, "model": "other-model"}', encoding="utf-8")
+                self.assertIn("fitted for other-model", app._probability_calibration(result(), "gpt-test")["reason"])
+                path.write_text('{"temperature": 2.0, "case_count": 30, "model": "gpt-test"}', encoding="utf-8")
+                calibrated = result()
+                metadata = app._probability_calibration(calibrated, "gpt-test")
+        self.assertTrue(metadata["applied"])
+        self.assertEqual(metadata["uncalibrated_distribution"]["A"], 0.75)
+        probabilities = [item["probability"] for item in calibrated["candidate_evaluations"]]
+        self.assertLess(probabilities[0], 0.75)
+        self.assertEqual(calibrated["candidate_evaluations"][0]["candidate"], "A")
+        self.assertAlmostEqual(sum(probabilities) + calibrated["no_listed_candidate_probability"], 1.0)
+
     def test_profile_cosine_matches_the_direct_formula(self) -> None:
         generator = random.Random(5)
         for _ in range(50):

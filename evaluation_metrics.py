@@ -160,6 +160,69 @@ def aggregate_scores(scores: Iterable[dict[str, Any]]) -> dict[str, float | int]
     }
 
 
+MIN_TEMPERATURE = 0.25
+MAX_TEMPERATURE = 4.0
+
+
+def temperature_scaled(distribution: dict[str, float], temperature: float) -> dict[str, float]:
+    """Temperature-scale a probability distribution: T > 1 flattens it, T < 1 sharpens it."""
+    powered = {
+        label: probability ** (1.0 / temperature) if probability > 0 else 0.0
+        for label, probability in distribution.items()
+    }
+    total = sum(powered.values())
+    return {label: value / total for label, value in powered.items()} if total > 0 else dict(distribution)
+
+
+def uncalibrated_distribution(result: dict[str, Any]) -> dict[str, float]:
+    """The distribution before any stored calibration, so refitting never compounds it."""
+    calibration = result.get("probability_calibration")
+    if isinstance(calibration, dict) and calibration.get("applied"):
+        stored = calibration.get("uncalibrated_distribution")
+        if isinstance(stored, dict) and stored:
+            return {str(label): max(0.0, float(value)) for label, value in stored.items()}
+    return probability_distribution(result)
+
+
+def fit_temperature(cases: Iterable[tuple[dict[str, Any], str]]) -> dict[str, Any]:
+    """Fit one temperature that minimizes mean log loss of the expected labels.
+
+    A golden-section search over log T is enough because the objective is a
+    smooth one-parameter curve on the bounded range.
+    """
+    rows = [(uncalibrated_distribution(result), expected) for result, expected in cases]
+    if not rows:
+        raise ValueError("At least one scored case is required to fit a temperature.")
+
+    def mean_log_loss(temperature: float) -> float:
+        return sum(
+            -math.log(max(EPSILON, temperature_scaled(distribution, temperature).get(expected, 0.0)))
+            for distribution, expected in rows
+        ) / len(rows)
+
+    low, high = math.log(MIN_TEMPERATURE), math.log(MAX_TEMPERATURE)
+    ratio = (math.sqrt(5.0) - 1.0) / 2.0
+    left, right = high - ratio * (high - low), low + ratio * (high - low)
+    left_loss, right_loss = mean_log_loss(math.exp(left)), mean_log_loss(math.exp(right))
+    for _ in range(60):
+        if left_loss <= right_loss:
+            high, right, right_loss = right, left, left_loss
+            left = high - ratio * (high - low)
+            left_loss = mean_log_loss(math.exp(left))
+        else:
+            low, left, left_loss = left, right, right_loss
+            right = low + ratio * (high - low)
+            right_loss = mean_log_loss(math.exp(right))
+    temperature = math.exp((low + high) / 2.0)
+    return {
+        "method": "temperature",
+        "temperature": round(temperature, 4),
+        "case_count": len(rows),
+        "mean_log_loss_before": round(mean_log_loss(1.0), 6),
+        "mean_log_loss_after": round(mean_log_loss(temperature), 6),
+    }
+
+
 def repeated_run_stability(results: Iterable[dict[str, Any]]) -> dict[str, float | int]:
     distributions = [probability_distribution(result) for result in results]
     pairwise = [

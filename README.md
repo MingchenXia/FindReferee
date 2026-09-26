@@ -111,6 +111,7 @@ Copy `.env.example` to a local `.env` file (loaded automatically by the launcher
 | `AUTHOR_ATTRIBUTION_PUBLIC_FULL_TEXTS` | `8` | Distributed pre-2026/chronological solo-paper excerpts per candidate; capped at 8 to preserve room for careful comparison. |
 | `AUTHOR_ATTRIBUTION_CITATION_NETWORK` | `true` | Enable the time-truncated Semantic Scholar citation prior. |
 | `AUTHOR_ATTRIBUTION_IMPOSTOR_AUTHORS` | `4` | Outside citation-network authors (0–8) whose exact-name solo arXiv works serve as General Impostors. `0` disables them; they are never collected when exploration beyond the candidate list is off. |
+| `AUTHOR_ATTRIBUTION_CALIBRATION_FILE` | unset | Optional temperature-calibration JSON produced by `benchmark.py --fit-calibration`. It is applied only when fitted on at least 20 labeled cases and for the same model as the run; the uncalibrated distribution is kept in the result. |
 | `AUTHOR_ATTRIBUTION_PARALLEL_PREFETCH` | `true` | Start the candidate-independent feature-ledger model call while citation tracing, identity checks, and corpus collection run, so two model calls may briefly overlap. Set `false` to keep every model call sequential. The ledger is computed once per run either way and shared by discovery and attribution. |
 | `SEMANTIC_SCHOLAR_API_KEY` | unset | Optional; the public API normally works without a key. |
 | `AUTHOR_ATTRIBUTION_CITATION_CACHE` | system cache | Optional citation-metadata cache directory. |

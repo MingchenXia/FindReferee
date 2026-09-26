@@ -26,6 +26,7 @@ from citation_network import (
     citation_network_prompt_section,
     collect_citation_network,
 )
+from evaluation_metrics import MAX_TEMPERATURE, MIN_TEMPERATURE, NO_LISTED_CANDIDATE, temperature_scaled
 from error_fingerprint import build_error_fingerprint_diagnostics, error_fingerprint_prompt_section
 from impostors import build_impostor_diagnostics, impostor_prompt_section
 from public_corpus import collect_arxiv_corpora, corpus_followup_section, corpus_prompt_section
@@ -84,6 +85,10 @@ CITATION_NETWORK_ENABLED = os.getenv("AUTHOR_ATTRIBUTION_CITATION_NETWORK", "tru
 # serve as General Impostors; 0 disables outside impostors.
 IMPOSTOR_AUTHORS = max(0, min(8, int(os.getenv("AUTHOR_ATTRIBUTION_IMPOSTOR_AUTHORS", "4"))))
 IMPOSTOR_PAPERS_PER_AUTHOR = 3
+# Optional benchmark-fitted temperature (see benchmark.py). It is applied only
+# when fitted on enough labeled cases and for the model that produced the run.
+CALIBRATION_FILE = os.getenv("AUTHOR_ATTRIBUTION_CALIBRATION_FILE", "").strip()
+MIN_CALIBRATION_CASES = 20
 # The neutral feature ledger depends only on the target prose, so it can run
 # while citation tracing, identity checks, and corpus collection proceed. Set
 # false to keep every model call strictly sequential.
@@ -3116,6 +3121,60 @@ def _apply_review_agreement_adjustment(
     return metadata
 
 
+def _probability_calibration(result: dict[str, Any], model: str) -> dict[str, Any]:
+    """Apply an optional benchmark-fitted temperature to the final distribution in place."""
+    if not CALIBRATION_FILE:
+        return {"applied": False, "reason": "No calibration file is configured."}
+    try:
+        calibration = json.loads(Path(CALIBRATION_FILE).expanduser().read_text(encoding="utf-8"))
+        temperature = float(calibration["temperature"])
+        case_count = int(calibration.get("case_count", 0))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"applied": False, "reason": f"The calibration file could not be read: {exc}"}
+    fitted_model = str(calibration.get("model") or "")
+    metadata: dict[str, Any] = {
+        "applied": False,
+        "method": "temperature scaling fitted on labeled benchmark cases",
+        "temperature": temperature,
+        "case_count": case_count,
+        "fitted_model": fitted_model or None,
+    }
+    if not MIN_TEMPERATURE <= temperature <= MAX_TEMPERATURE:
+        metadata["reason"] = f"The temperature must lie between {MIN_TEMPERATURE} and {MAX_TEMPERATURE}."
+    elif case_count < MIN_CALIBRATION_CASES:
+        metadata["reason"] = (
+            f"The calibration was fitted on {case_count} case(s); at least {MIN_CALIBRATION_CASES} are required."
+        )
+    elif fitted_model and fitted_model != model:
+        metadata["reason"] = f"The calibration was fitted for {fitted_model}, but this run used {model}."
+    if "reason" in metadata:
+        return metadata
+    evaluations = [
+        item
+        for item in result.get("candidate_evaluations", [])
+        if isinstance(item, dict) and str(item.get("candidate", "")).strip()
+    ]
+    distribution = {
+        str(item["candidate"]): max(0.0, float(item.get("probability", 0) or 0)) for item in evaluations
+    }
+    distribution[NO_LISTED_CANDIDATE] = max(0.0, float(result.get("no_listed_candidate_probability", 0) or 0))
+    calibrated = temperature_scaled(distribution, temperature)
+    for item in evaluations:
+        item["probability"] = calibrated[str(item["candidate"])]
+    evaluations.sort(key=lambda item: float(item.get("probability", 0)), reverse=True)
+    result["candidate_evaluations"] = evaluations
+    result["no_listed_candidate_probability"] = calibrated[NO_LISTED_CANDIDATE]
+    metadata.update(
+        {
+            "applied": True,
+            "reason": "A benchmark-fitted temperature was applied after the agreement adjustment.",
+            "uncalibrated_distribution": {name: round(value, 6) for name, value in distribution.items()},
+            "calibrated_distribution": {name: round(value, 6) for name, value in calibrated.items()},
+        }
+    )
+    return metadata
+
+
 def _attribution_determination(
     result: dict[str, Any], probability_adjustment: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -3806,6 +3865,7 @@ async def _perform_analysis(
                     "Verified manuscript authors were removed from the automatically discovered referee shortlist."
                 )
         result["manuscript_author_screen"] = manuscript_author_screen
+        result["probability_calibration"] = _probability_calibration(result, model)
         result["determination"] = _attribution_determination(result, probability_adjustment)
         result["mode"] = mode
         result["documents"] = [_document_metadata(document)]

@@ -129,5 +129,46 @@ class EvaluationMetricTests(unittest.TestCase):
         self.assertAlmostEqual(aggregate["unable_to_determine_rate"], 1 / 3)
 
 
+    def test_temperature_flattens_or_sharpens_without_reordering(self) -> None:
+        distribution = {"A": 0.6, "B": 0.3, "No listed candidate": 0.1}
+        flatter = evaluation_metrics.temperature_scaled(distribution, 2.0)
+        sharper = evaluation_metrics.temperature_scaled(distribution, 0.5)
+        self.assertLess(flatter["A"], 0.6)
+        self.assertGreater(sharper["A"], 0.6)
+        self.assertAlmostEqual(sum(flatter.values()), 1.0)
+        self.assertEqual(sorted(flatter, key=flatter.get), sorted(distribution, key=distribution.get))
+        for label, value in evaluation_metrics.temperature_scaled(distribution, 1.0).items():
+            self.assertAlmostEqual(value, distribution[label])
+
+    @staticmethod
+    def _case(leader_probability: float) -> dict:
+        return {
+            "candidate_evaluations": [
+                {"candidate": "A", "probability": leader_probability},
+                {"candidate": "B", "probability": 0.95 - leader_probability},
+            ],
+            "no_listed_candidate_probability": 0.05,
+        }
+
+    def test_fit_flattens_overconfident_and_sharpens_underconfident_results(self) -> None:
+        overconfident = [(self._case(0.9), "A")] * 6 + [(self._case(0.9), "B")] * 4
+        underconfident = [(self._case(0.55), "A")] * 10
+        flatten = evaluation_metrics.fit_temperature(overconfident)
+        sharpen = evaluation_metrics.fit_temperature(underconfident)
+        self.assertGreater(flatten["temperature"], 1.0)
+        self.assertLess(sharpen["temperature"], 1.0)
+        for fit in (flatten, sharpen):
+            self.assertLessEqual(fit["mean_log_loss_after"], fit["mean_log_loss_before"])
+        self.assertEqual(flatten["case_count"], 10)
+
+    def test_refitting_uses_the_stored_uncalibrated_distribution(self) -> None:
+        result = self._case(0.6)
+        result["probability_calibration"] = {
+            "applied": True,
+            "uncalibrated_distribution": {"A": 0.9, "B": 0.05, "No listed candidate": 0.05},
+        }
+        self.assertEqual(evaluation_metrics.uncalibrated_distribution(result)["A"], 0.9)
+        self.assertAlmostEqual(evaluation_metrics.uncalibrated_distribution(self._case(0.6))["A"], 0.6)
+
 if __name__ == "__main__":
     unittest.main()
