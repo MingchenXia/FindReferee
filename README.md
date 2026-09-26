@@ -181,6 +181,8 @@ Run the tests with:
 
 `benchmark.py --help` documents the case format. Point `AUTHOR_ATTRIBUTION_CALIBRATION_FILE` at the fitted file once it covers at least 20 labeled cases.
 
+On macOS, **Run Benchmark.command** does all of this in one double-click: it builds cases from the reports in `~/Downloads/Test reports` (asking once for each report's candidates and true author), checks every case and the Codex sign-in, runs the current version and revision `642043c`, and saves a comparison that is also copied to the clipboard. Running it again continues from the last finished run. `FINDREFEREE_REPORTS`, `FINDREFEREE_BASELINE`, `FINDREFEREE_REPEAT`, `FINDREFEREE_MODEL`, and `FINDREFEREE_EFFORT` change its defaults.
+
 To compare two versions on the same cases, check the older revision out beside this one and label each set of runs. Every run records its label, git revision, model, and effort:
 
 ```bash

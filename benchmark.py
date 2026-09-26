@@ -284,7 +284,8 @@ def command_run(args: argparse.Namespace) -> int:
             except ProviderFailure as exc:
                 print(
                     f"\n[{folder.name}] The model provider failed: {exc}\n"
-                    "Finished runs are kept. Fix the problem, then run again with --resume to continue.",
+                    "Finished runs are kept. Fix the problem, then start the benchmark again "
+                    "(double-click Run Benchmark.command, or add --resume) to continue.",
                     file=sys.stderr,
                 )
                 return 2
