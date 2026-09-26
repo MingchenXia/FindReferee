@@ -20,6 +20,7 @@ It can also compare several documents for likely common authorship.
 - PDF metadata and low-weight TeX-habit analysis
 - Time-truncated direct and second-order citation-network candidate priors, with prior-collaborator penalties
 - Offline RapidFuzz overlap checks, character n-grams, topic-masked character n-grams (text distortion), Burrows Delta, function-word Delta, review-voice distance, and Lingua language detection
+- A deterministic lexical error-fingerprint check: non-dictionary spellings the target shares with at least two independent works by one candidate, separated into likely misspellings, British spelling conventions, and unrecognized field terms
 - General Impostors verification against outside same-field authors from the citation network, giving a reproducible reference for the “No listed candidate” alternative
 - Multi-pass review with targeted follow-up rounds when finalists remain close
 - Explicit “No listed candidate” probability and same-name identity questions
@@ -36,7 +37,7 @@ The analysis pipeline separates observable evidence from final scoring:
 2. Resolve the underlying manuscript, verify its author identities, and remove any confirmed manuscript author from the referee pool. Name or initial collisions remain eligible until source-backed ORCID, author ID, official profile, affiliation, field, and publication evidence distinguishes the person from a namesake. Automatic exclusion requires two distinct public sources: normally an authoritative manuscript byline and a separate identity source. A single page never triggers exclusion.
 3. Trace a year-bounded citation graph. Direct citations are stronger candidate priors than second-order citations; neither is writing evidence.
 4. Collect known private samples and exact-name solo-author public works when available.
-5. Run deterministic overlap, stylometry (including a topic-masked expertise-ablation view), General Impostors, report-voice, and surface-language checks.
+5. Run deterministic overlap, stylometry (including a topic-masked expertise-ablation view), General Impostors, lexical error-fingerprint, report-voice, and surface-language checks.
 6. Ask independent model passes to evaluate direct writing evidence separately from academic and network proximity.
 7. Run focused expertise-ablation and counter-evidence rounds for close finalists.
 8. Adjudicate the evidence, preserve a “none of the above” alternative, and render concise and detailed reports.
@@ -169,7 +170,7 @@ Run the tests with:
 
 `evaluation_metrics.py` provides blind-test unique Top-1 accuracy, a separate Top-1-including-ties rate, tie rate, MRR, true-author margin, log loss, Brier score, entropy, decisive accuracy, and repeated-run Jensen-Shannon stability. A label tied at the highest probability is not counted as a unique Top-1 win. Keep private reports, expected labels, and run artifacts under the ignored `benchmarks/` directory so ground truth is never sent to the model or committed accidentally.
 
-The project deliberately builds on maintained, general-purpose components rather than low-usage end-to-end attribution repositories: RapidFuzz supplies reproducible string matching and Lingua identifies the written language. LanguageTool, spaCy, and neural embedding stacks were evaluated but are not required because they add large downloads, privacy-sensitive services, or topic leakage without a validated gain on the private benchmark.
+The project deliberately builds on maintained, general-purpose components rather than low-usage end-to-end attribution repositories: RapidFuzz supplies reproducible string matching, Lingua identifies the written language, and pyspellchecker supplies a compact MIT-licensed English lexicon for the lexical error-fingerprint check. LanguageTool, spaCy, and neural embedding stacks were evaluated but are not required because they add large downloads, privacy-sensitive services, or topic leakage without a validated gain on the private benchmark.
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 

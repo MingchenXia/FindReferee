@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import app
+import error_fingerprint
 import public_corpus
 import stylometry
 
@@ -1459,7 +1460,7 @@ class _FakePage:
         return self.text
 
 
-class EfficiencyTests(unittest.TestCase):
+class AnalysisOrchestrationTests(unittest.TestCase):
     LEDGER = {
         "sample_diagnostics": "usable",
         "feature_ledger": [{"category": "error_pattern", "observation": "Repeated 'teh' spelling."}],
@@ -1705,6 +1706,43 @@ class EfficiencyTests(unittest.TestCase):
                     self.assertEqual(impostors["external_impostor_authors"], ["Outside Expert", "Second Outsider"])
                     self.assertEqual(impostors["leader"], "Alice Author")
                 self.assertTrue(any("General Impostors" in prompt for _, _, prompt in calls))
+
+    def test_error_fingerprint_uses_private_files_and_respects_language_switch(self) -> None:
+        private = {
+            "Alice Author": [
+                {"name": "a1.txt", "text": "It occured to me that this is neccessary. " * 3, "truncated": False, "metadata": {}},
+                {"name": "a2.txt", "text": "The claim occured twice and seems neccessary. " * 3, "truncated": False, "metadata": {}},
+            ]
+        }
+        document = {
+            "name": "report.txt",
+            "text": "The authors say the bound occured early, but it is not neccessary for the proof. " * 8,
+            "metadata": {},
+            "format": "text",
+            "truncated": False,
+        }
+        for ignore_language in (False, True):
+            calls: list[tuple[str, bool | None, str]] = []
+            with self.subTest(ignore_language=ignore_language):
+                with (
+                    patch.object(app, "CITATION_NETWORK_ENABLED", False),
+                    patch.object(app, "PUBLIC_CORPUS_ENABLED", False),
+                    patch.object(app, "ANALYSIS_REVIEW_PASSES", 1),
+                    patch.object(app, "ADAPTIVE_MAX_TARGETED_ROUNDS", 0),
+                    patch.object(app, "_call_model", side_effect=self._fake_model(calls)),
+                ):
+                    result = asyncio.run(
+                        app._perform_analysis(
+                            "attribution", ["Alice Author", "Bob Writer"], [document], "", {},
+                            {"ignore_language": ignore_language}, "gpt-test", "high", private,
+                        )
+                    )
+                fingerprint = result["deterministic_error_fingerprint"]
+                if ignore_language:
+                    self.assertFalse(fingerprint["available"])
+                elif error_fingerprint.SpellChecker is not None:
+                    self.assertEqual(fingerprint["leader"], "Alice Author")
+                    self.assertTrue(any('"occured"' in prompt for _, _, prompt in calls))
 
     def test_profile_cosine_matches_the_direct_formula(self) -> None:
         generator = random.Random(5)

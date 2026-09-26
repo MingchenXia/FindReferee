@@ -26,6 +26,7 @@ from citation_network import (
     citation_network_prompt_section,
     collect_citation_network,
 )
+from error_fingerprint import build_error_fingerprint_diagnostics, error_fingerprint_prompt_section
 from impostors import build_impostor_diagnostics, impostor_prompt_section
 from public_corpus import collect_arxiv_corpora, corpus_followup_section, corpus_prompt_section
 from review_voice import build_review_voice_diagnostics, review_voice_prompt_section
@@ -1410,6 +1411,7 @@ def _attribution_prompt(
     review_voice_section: str | None = None,
     manuscript_author_screen_section: str | None = None,
     diagnostics: dict[str, str] | None = None,
+    error_fingerprint_section: str | None = None,
 ) -> str:
     context_section = context_note.strip() or "No additional context was provided."
     profile_section = json.dumps(candidate_context or {}, ensure_ascii=False) if candidate_context else "No candidate background information was provided."
@@ -1494,6 +1496,9 @@ For a target under 200 words, the packet may also include a length-matched chara
 
 Deterministic phrase-overlap precheck (RapidFuzz; diagnostic only, not an authorship score):
 {deterministic_comparison}
+
+DETERMINISTIC rare-token error fingerprint (lexicon check; supporting evidence only). It lists non-dictionary lowercase tokens in the target and those that recur in at least two independent works by one candidate. Only an exclusive misspelling_like token (a known word is one edit away and no other candidate uses it) is candidate-specific; verify each one in the source text before relying on it, and still apply the recurrence, OCR, quotation, and copy-editing rules above. variant_spelling is a British convention, not an error, and unrecognized_term is usually field vocabulary. The absence of a lexical fingerprint is not evidence against a candidate, because grammar errors spelled correctly are outside this check:
+{error_fingerprint_section or "No deterministic error-fingerprint packet was available."}
 
 Deterministic surface-language precheck (Lingua; this identifies the written language only, not the author's native language):
 {surface_language_detection}
@@ -3510,6 +3515,7 @@ async def _perform_analysis(
                     ],
                 )
         review_voice_section = review_voice_prompt_section(review_voice_diagnostics)
+        public_corpora: dict[str, list[dict[str, Any]]] = {}
         impostor_diagnostics: dict[str, Any] = {
             "available": False,
             "reason": "No automatic public corpus was available.",
@@ -3619,6 +3625,39 @@ async def _perform_analysis(
                         + " This is an uncalibrated reference, not a verdict."
                     ],
                 )
+        if controls.get("ignore_language"):
+            error_fingerprint_diagnostics: dict[str, Any] = {
+                "available": False,
+                "reason": "Language and writing-habit analysis was disabled by the user.",
+            }
+        else:
+            # Private files and public solo works are both known-author prose.
+            fingerprint_corpora = {
+                candidate: public_corpora.get(candidate, []) + reference_corpus.get(candidate, [])
+                for candidate in candidate_list
+            }
+            error_fingerprint_diagnostics = await asyncio.to_thread(
+                build_error_fingerprint_diagnostics, document.get("text", ""), fingerprint_corpora
+            )
+            if error_fingerprint_diagnostics.get("available"):
+                fingerprint_leader = error_fingerprint_diagnostics.get("leader")
+                if fingerprint_leader:
+                    examples = [
+                        item["token"]
+                        for item in error_fingerprint_diagnostics["candidates"][fingerprint_leader]["shared_fingerprints"]
+                        if item["class"] == "misspelling_like" and not item["other_candidates_using_it"]
+                    ][:3]
+                    fingerprint_clue = (
+                        f"Lexical error-fingerprint check: {fingerprint_leader} shares non-dictionary spellings "
+                        f"with the target across 2+ independent works ({', '.join(examples)}). Each needs verification."
+                    )
+                else:
+                    fingerprint_clue = (
+                        "Lexical error-fingerprint check: no misspelling-like token in the target recurs in two "
+                        "works of a single candidate. Correctly spelled grammar habits are left to the reviewers."
+                    )
+                _emit_progress(progress, "Error-fingerprint cross-check ready", [fingerprint_clue])
+        error_fingerprint_section = error_fingerprint_prompt_section(error_fingerprint_diagnostics)
         # The three prompt variants below differ only in their public-corpus
         # packet, so the deterministic prechecks run once, off the event loop.
         prompt_diagnostics = await asyncio.to_thread(
@@ -3637,6 +3676,7 @@ async def _perform_analysis(
             review_voice_section,
             manuscript_author_screen_section,
             prompt_diagnostics,
+            error_fingerprint_section,
         )
         if underlying_document:
             _emit_progress(
@@ -3677,6 +3717,7 @@ async def _perform_analysis(
             review_voice_section,
             manuscript_author_screen_section,
             prompt_diagnostics,
+            error_fingerprint_section,
         )
         adjudication_source = _attribution_prompt(
             candidate_list,
@@ -3691,6 +3732,7 @@ async def _perform_analysis(
             review_voice_section,
             manuscript_author_screen_section,
             prompt_diagnostics,
+            error_fingerprint_section,
         )
         attribution_feature_sheet = await feature_ledger.result()
         result = await asyncio.to_thread(
@@ -3783,6 +3825,7 @@ async def _perform_analysis(
         result["citation_network"] = citation_network_diagnostics
         result["deterministic_stylometry"] = stylometry_diagnostics
         result["deterministic_impostors"] = impostor_diagnostics
+        result["deterministic_error_fingerprint"] = error_fingerprint_diagnostics
         result["deterministic_review_voice"] = review_voice_diagnostics
         result["provider"] = provider
         result["model"] = model
