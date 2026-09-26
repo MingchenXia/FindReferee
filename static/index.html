@@ -411,7 +411,9 @@
     async function requestJson(url, options) {
       let response;
       try { response = await fetch(url, options); } catch (error) {
-        throw new Error('The local analysis server is not running or the page is not open from http://127.0.0.1:8000. Start the app server, open that address, and try again. Browser detail: ' + (error.message || 'network request failed'));
+        const failure = new Error('The local analysis server is not running or the page is not open from http://127.0.0.1:8000. Start the app server, open that address, and try again. Browser detail: ' + (error.message || 'network request failed'));
+        failure.transient = true;
+        throw failure;
       }
       const body = await response.text();
       let payload;
@@ -483,9 +485,17 @@
     async function runAnalysisInBackground(data) {
       const started = await requestJson('/api/analyze/start', {method:'POST', body:data});
       let delay = 900;
+      let outageStartedAt = null;
       while (true) {
         await new Promise(resolve => setTimeout(resolve, delay));
-        const status = await requestJson(`/api/analyze/status/${encodeURIComponent(started.job_id)}`);
+        let status;
+        try { status = await requestJson(`/api/analyze/status/${encodeURIComponent(started.job_id)}`); outageStartedAt = null; } catch (error) {
+          // Keep waiting through a brief server restart; a stored result or an interruption notice follows.
+          outageStartedAt = outageStartedAt ?? Date.now();
+          if (!error.transient || Date.now() - outageStartedAt > 180000) throw error;
+          updateThinkingStatus('Waiting for the local server to come back', []);
+          continue;
+        }
         updateThinkingStatus(status.stage, status.clues || []);
         if (status.status === 'completed') return status.result;
         if (status.status === 'error') throw new Error(status.detail || 'The analysis failed.');

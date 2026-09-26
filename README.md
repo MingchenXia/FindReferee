@@ -111,6 +111,7 @@ Copy `.env.example` to a local `.env` file (loaded automatically by the launcher
 | `AUTHOR_ATTRIBUTION_PUBLIC_FULL_TEXTS` | `8` | Distributed pre-2026/chronological solo-paper excerpts per candidate; capped at 8 to preserve room for careful comparison. |
 | `AUTHOR_ATTRIBUTION_CITATION_NETWORK` | `true` | Enable the time-truncated Semantic Scholar citation prior. |
 | `AUTHOR_ATTRIBUTION_IMPOSTOR_AUTHORS` | `4` | Outside citation-network authors (0–8) whose exact-name solo arXiv works serve as General Impostors. `0` disables them; they are never collected when exploration beyond the candidate list is off. |
+| `AUTHOR_ATTRIBUTION_JOB_STORE` | unset | Optional path to a local SQLite file, for example `~/.local/share/findreferee/jobs.sqlite3`. Background results then survive a server restart, and starting the same analysis again after an interruption reuses its finished model calls. See Privacy before enabling it. |
 | `AUTHOR_ATTRIBUTION_CALIBRATION_FILE` | unset | Optional temperature-calibration JSON produced by `benchmark.py --fit-calibration`. It is applied only when fitted on at least 20 labeled cases and for the same model as the run; the uncalibrated distribution is kept in the result. |
 | `AUTHOR_ATTRIBUTION_PARALLEL_PREFETCH` | `true` | Start the candidate-independent feature-ledger model call while citation tracing, identity checks, and corpus collection run, so two model calls may briefly overlap. Set `false` to keep every model call sequential. The ledger is computed once per run either way and shared by discovery and attribution. |
 | `SEMANTIC_SCHOLAR_API_KEY` | unset | Optional; the public API normally works without a key. |
@@ -123,6 +124,7 @@ Model names must be available to the signed-in account or configured API project
 - The server binds to `127.0.0.1` by default.
 - The app does not read, copy, or transmit Codex authentication files.
 - Uploaded files are held in memory for the active analysis and are not intentionally written to persistent app storage.
+- By default, results and model responses are also kept only in memory. If you set `AUTHOR_ATTRIBUTION_JOB_STORE`, completed results and the model responses of unfinished runs, which can quote your documents, are written to that SQLite file with owner-only permissions until the job TTL expires. A normally completed run deletes its saved model responses.
 - Private candidate corpora are sent to the selected model for that run, but are not used as public-search queries or shown as public citations.
 - Public author cards are saved only in that browser's local storage.
 - Public arXiv excerpts may be cached locally to make later runs more reliable and efficient.

@@ -25,6 +25,7 @@ USER_AGENT = "AuthorAttribution/0.1 (local noncommercial research tool)"
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 QUERY_CACHE_SECONDS = 7 * 24 * 60 * 60
 ARXIV_QUERY_INTERVAL_SECONDS = 3.0
+CACHE_BOOKKEEPING_FIELDS = frozenset({"query_cached", "cached_full_text_samples", "query_warning"})
 MAX_PDF_BYTES = 12 * 1024 * 1024
 MAX_EXCERPT_CHARS = 7_000
 PROMPT_EXCERPT_CHARS = max(
@@ -320,9 +321,18 @@ Source: {sample['abstract_url']}
 ---"""
             )
         blocks.append(f"CANDIDATE: {label}\n" + "\n\n".join(paper_blocks))
+    # Cache bookkeeping is irrelevant to the model and would make an otherwise
+    # identical prompt differ between a first run and a resumed one.
+    stable_diagnostics = {
+        **diagnostics,
+        "candidates": {
+            label: {key: value for key, value in details.items() if key not in CACHE_BOOKKEEPING_FIELDS}
+            for label, details in (diagnostics.get("candidates") or {}).items()
+        },
+    }
     return (
         "Official public-corpus diagnostics:\n"
-        + json.dumps(diagnostics, ensure_ascii=False)
+        + json.dumps(stable_diagnostics, ensure_ascii=False)
         + "\n\n"
         + "\n\n".join(blocks)
     )
