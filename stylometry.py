@@ -23,9 +23,51 @@ due via within without among whereas whether
 """.split()
 
 
+_KEPT_WORDS = frozenset(FUNCTION_WORDS)
+_WORD = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
+
+# Character views that measure overlapping signal. Each family casts one vote;
+# its first available metric speaks for it, so the topic-masked view overrides
+# raw character n-grams, and legacy keys keep older stored reports readable.
+VIEW_FAMILIES: dict[str, tuple[str, ...]] = {
+    "character": (
+        "topic_masked_character_best_three_mean",
+        "character_ngram_best_three_mean",
+        "length_matched_character_median",
+    ),
+    "most_frequent_words": ("burrows_delta",),
+    "function_words": ("function_word_delta",),
+}
+
+
+def view_family_leaders(metric_leaders: dict[str, Any]) -> dict[str, str]:
+    """Collapse correlated metric leaders into one leader per view family."""
+    leaders: dict[str, str] = {}
+    for family, metrics in VIEW_FAMILIES.items():
+        for metric in metrics:
+            leader = str(metric_leaders.get(metric) or "").strip()
+            if leader:
+                leaders[family] = leader
+                break
+    return leaders
+
+
 def _normalized(text: str) -> str:
     value = text.casefold().replace("\u00ad", "")
     value = re.sub(r"[^a-z'.,;:!?()\-]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _topic_masked(text: str) -> str:
+    """Text distortion (Stamatatos 2017, DV-MA) with subject vocabulary removed.
+
+    Function words stay; every other word becomes asterisks of the same length.
+    Punctuation, word-length rhythm, and function-word order survive, while the
+    technical terms that make same-field candidates look alike do not.
+    """
+    value = text.casefold().replace("\u00ad", "").replace("’", "'")
+    value = _WORD.sub(lambda match: match.group(0) if match.group(0) in _KEPT_WORDS else "*" * len(match.group(0)), value)
+    value = re.sub(r"[^a-z*'.,;:!?()\-]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -47,10 +89,26 @@ def _profile(counts: Counter[str]) -> _Profile:
     return counts, math.sqrt(sum(value * value for value in counts.values()))
 
 
-def _ngram_profiles(text: str) -> dict[int, _Profile]:
+def _masked_ngram_counts(masked: str, width: int) -> Counter[str]:
+    # Grams made only of mask characters record nothing but "long words here",
+    # yet they would dominate the counts and push every similarity toward 1.
+    counts = _ngram_counts(masked, width)
+    for gram in [gram for gram in counts if not gram.strip("* ")]:
+        del counts[gram]
+    return counts
+
+
+def _ngram_profiles(text: str, *, topic_masked: bool = False) -> dict[int, _Profile]:
     """Normalize a text once and build every character n-gram view from it."""
+    if topic_masked:
+        masked = _topic_masked(text)
+        return {width: _profile(_masked_ngram_counts(masked, width)) for width in _NGRAM_WIDTHS}
     normalized = _normalized(text)
     return {width: _profile(_ngram_counts(normalized, width)) for width in _NGRAM_WIDTHS}
+
+
+def _mean_similarity(left: dict[int, _Profile], right: dict[int, _Profile]) -> float:
+    return sum(_profile_cosine(left[width], right[width]) for width in _NGRAM_WIDTHS) / len(_NGRAM_WIDTHS)
 
 
 def _profile_cosine(left: _Profile, right: _Profile) -> float:
@@ -186,6 +244,7 @@ def build_stylometry_diagnostics(
     # Each text is normalized, n-grammed, and word-counted exactly once; both
     # Delta views share the same relative word frequencies.
     target_profiles = _ngram_profiles(target_text)
+    target_masked_profiles = _ngram_profiles(target_text, topic_masked=True)
     target_frequencies = _word_frequencies(target_text)
     sample_frequencies = [
         (candidate, _word_frequencies(text)) for candidate, values in texts.items() for text in values
@@ -202,9 +261,11 @@ def build_stylometry_diagnostics(
     candidates: dict[str, Any] = {}
     for candidate, samples in usable.items():
         paper_scores = []
+        masked_scores = []
         for sample in samples:
-            profiles = _ngram_profiles(str(sample["text"]))
-            similarity = sum(_profile_cosine(target_profiles[width], profiles[width]) for width in profiles) / 3
+            text = str(sample["text"])
+            similarity = _mean_similarity(target_profiles, _ngram_profiles(text))
+            masked_scores.append(round(_mean_similarity(target_masked_profiles, _ngram_profiles(text, topic_masked=True)), 4))
             paper_scores.append(
                 {
                     "title": str(sample.get("title") or sample.get("name") or "Untitled sample"),
@@ -212,6 +273,7 @@ def build_stylometry_diagnostics(
                 }
             )
         paper_scores.sort(key=lambda item: item["similarity"], reverse=True)
+        masked_scores.sort(reverse=True)
         candidates[candidate] = {
             "sample_count": len(paper_scores),
             "character_ngram_mean": round(
@@ -219,6 +281,10 @@ def build_stylometry_diagnostics(
             ),
             "character_ngram_best_three_mean": round(
                 sum(item["similarity"] for item in paper_scores[:3]) / min(3, len(paper_scores)), 4
+            ),
+            "topic_masked_character_mean": round(sum(masked_scores) / len(masked_scores), 4),
+            "topic_masked_character_best_three_mean": round(
+                sum(masked_scores[:3]) / min(3, len(masked_scores)), 4
             ),
             "burrows_delta": round(burrows[candidate], 4),
             "function_word_delta": round(function_delta[candidate], 4),
@@ -228,6 +294,7 @@ def build_stylometry_diagnostics(
             candidates[candidate]["length_matched_character"] = length_matched[candidate]
     metric_specs = {
         "character_ngram_best_three_mean": True,
+        "topic_masked_character_best_three_mean": True,
         "burrows_delta": False,
         "function_word_delta": False,
     }
@@ -247,6 +314,17 @@ def build_stylometry_diagnostics(
         leaders[metric] = ranked[0]
         for rank, name in enumerate(ranked, start=1):
             candidates[name].setdefault("metric_ranks", {})[metric] = rank
+    topic_ablation = {
+        "raw_character_leader": leaders["character_ngram_best_three_mean"],
+        "topic_masked_character_leader": leaders["topic_masked_character_best_three_mean"],
+        "agrees": leaders["character_ngram_best_three_mean"] == leaders["topic_masked_character_best_three_mean"],
+    }
+    topic_ablation["note"] = (
+        "The character-level leader survives removal of subject vocabulary."
+        if topic_ablation["agrees"]
+        else "Masking subject vocabulary changes the character-level leader, so raw character similarity is "
+        "likely topic-driven; the topic-masked view speaks for the character family."
+    )
     if word_count < 150:
         reliability = "very low"
     elif word_count < 350:
@@ -261,6 +339,12 @@ def build_stylometry_diagnostics(
         "short_sample_reliability": reliability,
         "methods": {
             "character_ngram": "Cosine similarity over normalized character 3-, 4-, and 5-grams; higher is closer.",
+            "topic_masked_character": (
+                "Text distortion (Stamatatos 2017): every word outside an English function-word list is replaced by "
+                "asterisks of the same length before the same character n-gram cosine; higher is closer. It keeps "
+                "punctuation, function-word order, and word-length rhythm while removing subject vocabulary, so it is "
+                "a deterministic expertise-ablation check. It belongs to the same character family as the raw view."
+            ),
             "burrows_delta": "Mean absolute standardized distance over the 160 most frequent corpus words; lower is closer.",
             "function_word_delta": "Burrows-style distance restricted to an English function-word list; lower is closer.",
             **(
@@ -277,6 +361,8 @@ def build_stylometry_diagnostics(
             ),
         },
         "metric_leaders": leaders,
+        "view_family_leaders": view_family_leaders(leaders),
+        "topic_ablation": topic_ablation,
         "candidates": candidates,
         "caveat": (
             "These are uncalibrated diagnostics, not probabilities. Topic, genre, PDF extraction, equations, "

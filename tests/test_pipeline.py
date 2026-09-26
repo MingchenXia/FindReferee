@@ -452,9 +452,68 @@ class PipelineTests(unittest.TestCase):
         diagnostics = stylometry.build_stylometry_diagnostics(target, corpora)
         self.assertTrue(diagnostics["available"])
         self.assertEqual(set(diagnostics["metric_leaders"]), {
-            "character_ngram_best_three_mean", "burrows_delta", "function_word_delta"
+            "character_ngram_best_three_mean",
+            "topic_masked_character_best_three_mean",
+            "burrows_delta",
+            "function_word_delta",
         })
+        self.assertEqual(
+            set(diagnostics["view_family_leaders"]), {"character", "most_frequent_words", "function_words"}
+        )
         self.assertIn("uncalibrated diagnostics", diagnostics["caveat"])
+
+    def test_topic_masking_overrides_a_topic_driven_character_leader(self) -> None:
+        # A shares the target's subject vocabulary; B shares its function-word and punctuation habits.
+        target = (
+            "However, holomorphic sectional curvature bounds for Kahler Einstein metrics with plurisubharmonic "
+            "exhaustion functions and Monge Ampere regularity estimates are not proved; indeed, they should be. "
+        ) * 10
+        corpora = {
+            "A": [{"title": "A1", "text": (
+                "Our holomorphic sectional curvature bounds for Kahler Einstein metrics with plurisubharmonic "
+                "exhaustion functions and Monge Ampere regularity estimates, as this note explains. "
+            ) * 10}],
+            "B": [{"title": "B1", "text": (
+                "However, stochastic gradient variance bounds for Markov chain samplers are not proved; "
+                "indeed, they should be. "
+            ) * 10}],
+        }
+        diagnostics = stylometry.build_stylometry_diagnostics(target, corpora)
+        self.assertEqual(diagnostics["metric_leaders"]["character_ngram_best_three_mean"], "A")
+        self.assertEqual(diagnostics["metric_leaders"]["topic_masked_character_best_three_mean"], "B")
+        self.assertFalse(diagnostics["topic_ablation"]["agrees"])
+        self.assertEqual(diagnostics["view_family_leaders"]["character"], "B")
+
+    def test_correlated_character_views_cast_a_single_vote(self) -> None:
+        leaders = {
+            "character_ngram_best_three_mean": "A",
+            "length_matched_character_median": "A",
+            "burrows_delta": "B",
+            "function_word_delta": "B",
+        }
+        self.assertEqual(
+            stylometry.view_family_leaders(leaders),
+            {"character": "A", "most_frequent_words": "B", "function_words": "B"},
+        )
+        result = {
+            "summary": "Report.",
+            "confidence": "medium",
+            "no_listed_candidate_probability": 0.05,
+            "candidate_evaluations": [
+                {"candidate": "A", "probability": 0.7, "evidence_breakdown": {"error_patterns": 0.9, "reference_corpus": 0.9}},
+                {"candidate": "B", "probability": 0.25, "evidence_breakdown": {"error_patterns": 0.2, "reference_corpus": 0.1}},
+            ],
+        }
+        snapshots = [
+            {"ranking": [{"candidate": "A", "probability": 0.7}, {"candidate": "B", "probability": 0.25}],
+             "no_listed_candidate_probability": 0.05}
+            for _ in range(4)
+        ]
+        adjustment = app._apply_review_agreement_adjustment(
+            result, snapshots, {"available": True, "metric_leaders": leaders}, None, {"A": 2}
+        )
+        self.assertEqual(adjustment["leader_metric_count"], 1)
+        self.assertNotIn("multi-view stylometry", adjustment["direct_style_families"])
 
     def test_short_target_adds_length_matched_character_sensitivity_check(self) -> None:
         target = "However, this argument is not complete. Therefore, explain the result more carefully. " * 5

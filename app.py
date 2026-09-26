@@ -28,7 +28,7 @@ from citation_network import (
 )
 from public_corpus import collect_arxiv_corpora, corpus_followup_section, corpus_prompt_section
 from review_voice import build_review_voice_diagnostics, review_voice_prompt_section
-from stylometry import build_stylometry_diagnostics, stylometry_prompt_section
+from stylometry import build_stylometry_diagnostics, stylometry_prompt_section, view_family_leaders
 
 try:
     from rapidfuzz import fuzz, process as rapidfuzz_process
@@ -1445,6 +1445,7 @@ DETERMINISTIC referee-report voice packet, when available. It compares stance, h
 A review-voice leader based on only one reference report is low-data sensitivity evidence even when its separation is large. It may count as a direct family only when the leading candidate has at least two independent review-like references, low within-candidate dispersion, and a separated match; otherwise it cannot sharpen probabilities.
 
 When a deterministic multi-view stylometry packet is present, treat it as a reproducible cross-check rather than a probability model. Agreement across character n-grams, Burrows Delta, and function-word Delta is useful supporting evidence, especially for a reasonably long target; disagreement is itself a warning about topic, genre, extraction noise, or sample instability. If the target is a short referee report but the comparison corpus consists of formal research papers, all of these cross-genre stylometry views together count as one weak sensitivity check, not multiple direct evidence families, and should normally contribute no more than about 10% of the comparative decision unless a rare error independently recurs. Never let one distance metric override repeated rare-error matches, verified reviewer-role conflicts, strong provenance, or clear counterevidence.
+The topic-masked character view (text distortion) replaces every non-function word with asterisks of the same length before comparing character n-grams, so subject vocabulary cannot drive it. It is the deterministic counterpart of the expertise-ablation check: if its leader differs from the raw character leader, treat the raw character agreement as likely topic-driven. Raw character n-grams, topic-masked character n-grams, and length-matched windows form one correlated character family and never count as separate votes.
 For a target under 200 words, the packet may also include a length-matched character-window sensitivity check. It reduces the distortion from comparing a tiny report directly with full papers, but it is correlated with the ordinary character n-gram view. Use its separation to assess short-sample stability; never count those two character views as independent evidence families.
 
 Deterministic phrase-overlap precheck (RapidFuzz; diagnostic only, not an authorship score):
@@ -2909,14 +2910,13 @@ def _apply_review_agreement_adjustment(
         return metadata
     direct_style_families: list[str] = []
     if isinstance(stylometry_diagnostics, dict) and stylometry_diagnostics.get("available"):
-        metric_leader_values = [
-            str(value).strip()
-            for value in (stylometry_diagnostics.get("metric_leaders") or {}).values()
-            if str(value).strip()
-        ]
-        metric_leaders = set(metric_leader_values)
-        leader_metric_count = sum(1 for value in metric_leader_values if value == leader)
+        # Correlated character views (raw, topic-masked, length-matched) cast one
+        # vote together, so adding a view never manufactures agreement.
+        family_leaders = view_family_leaders(stylometry_diagnostics.get("metric_leaders") or {})
+        metric_leaders = set(family_leaders.values())
+        leader_metric_count = sum(1 for value in family_leaders.values() if value == leader)
         metadata["deterministic_metric_leaders"] = sorted(metric_leaders)
+        metadata["deterministic_view_family_leaders"] = family_leaders
         metadata["leader_metric_count"] = leader_metric_count
         if metric_leaders and leader_metric_count == 0:
             metadata["stylometry_disagreement_note"] = (
@@ -3507,6 +3507,7 @@ async def _perform_analysis(
                     [
                         "Statistical corpus cross-check leaders: "
                         f"character n-grams — {leaders.get('character_ngram_best_three_mean', 'none')}; "
+                        f"topic-masked character n-grams — {leaders.get('topic_masked_character_best_three_mean', 'none')}; "
                         f"Burrows Delta — {leaders.get('burrows_delta', 'none')}; "
                         f"function words — {leaders.get('function_word_delta', 'none')}. "
                         "These are supporting diagnostics, not a verdict."
