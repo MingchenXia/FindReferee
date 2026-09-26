@@ -59,6 +59,24 @@ class ErrorFingerprintTests(unittest.TestCase):
         self.assertNotIn("argu", listed)
         self.assertNotIn("nite", listed)
 
+    def test_notation_tex_commands_and_short_tokens_are_not_misspellings(self) -> None:
+        target = "We bound \\frac{1}{2} on supp f and diam K, see https://arxiv.org/abs/1 and the wich case; recieve it."
+        corpora = {
+            "A": [
+                {"text": "The supp and diam of \\frac{a}{b} in the wich case; recieve it."},
+                {"text": "Again supp, diam, \\frac{c}{d}, and wich; recieve."},
+            ],
+            "B": [{"text": "Unrelated prose."}],
+        }
+        result = error_fingerprint.build_error_fingerprint_diagnostics(target, corpora)
+        classes = {item["token"]: item["class"] for item in result["candidates"]["A"]["shared_fingerprints"]}
+        self.assertNotIn("supp", classes)
+        self.assertNotIn("diam", classes)
+        self.assertNotIn("frac", classes)
+        self.assertNotIn("arxiv", classes)
+        self.assertEqual(classes["wich"], "unrecognized_term")
+        self.assertEqual(classes["recieve"], "misspelling_like")
+
     def test_missing_lexicon_reports_unavailable(self) -> None:
         with patch.object(error_fingerprint, "_lexicon", return_value=None):
             self.assertFalse(error_fingerprint.build_error_fingerprint_diagnostics(TARGET, CORPORA)["available"])

@@ -26,6 +26,9 @@ except ImportError:  # Optional: without a lexicon the diagnostic reports itself
 
 MIN_CANDIDATE_WORKS = 2
 MIN_TOKEN_LENGTH = 4
+# Short tokens sit one edit away from many dictionary words, so only longer ones
+# can be called misspelling-like.
+MIN_MISSPELLING_LENGTH = 5
 MAX_FINGERPRINTS_PER_CANDIDATE = 12
 MAX_TARGET_TOKENS = 25
 _CLASS_ORDER = {"misspelling_like": 0, "variant_spelling": 1, "unrecognized_term": 2}
@@ -42,6 +45,15 @@ _VARIANT_RULES = (
     (r"oe", "e"),
 )
 _WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+# Mathematical and bibliographic abbreviations that no English lexicon lists.
+_NOTATION = frozenset(
+    """
+    supp diam dist coker codim diag wlog resp esssup liminf limsup argmin argmax proj ibid infty hess
+    sgn sinh cosh tanh coth sech csch arcsin arccos arctan arsinh arcosh artanh erfc lcm gcd coim
+    eqn eqns thm thms prop props lem lemm defn defns rmk rmks figs refs proc conf univ dept
+    arxiv preprint preprints eprint eprints mathscinet zbmath https http html latex bibtex isbn issn
+    """.split()
+)
 
 
 @lru_cache(maxsize=1)
@@ -54,6 +66,7 @@ def _clean(text: str) -> str:
     value = unicodedata.normalize("NFKC", text)  # expands ligatures such as "ﬁ"
     value = "".join(character for character in unicodedata.normalize("NFKD", value) if not unicodedata.combining(character))
     value = value.replace("’", "'")
+    value = re.sub(r"https?://\S+|\\[A-Za-z@]+", " ", value)  # URLs and TeX control words
     return re.sub(r"([A-Za-z])-\s*\n\s*([a-z])", r"\1\2", value)  # rejoin words hyphenated across lines
 
 
@@ -62,7 +75,7 @@ def _lowercase_tokens(text: str) -> Counter[str]:
     return Counter(
         token
         for token in _WORD.findall(_clean(text))
-        if token.islower() and len(token) >= MIN_TOKEN_LENGTH and "'" not in token
+        if token.islower() and len(token) >= MIN_TOKEN_LENGTH and "'" not in token and token not in _NOTATION
     )
 
 
@@ -71,6 +84,8 @@ def _classify(token: str, lexicon: Any) -> tuple[str, str | None]:
         variant = re.sub(pattern, replacement, token)
         if variant != token and not lexicon.unknown([variant]):
             return "variant_spelling", variant
+    if len(token) < MIN_MISSPELLING_LENGTH:
+        return "unrecognized_term", None
     corrections = lexicon.candidates(token) or set()
     corrections.discard(token)
     known = sorted(word for word in corrections if not lexicon.unknown([word]))
@@ -154,9 +169,10 @@ def build_error_fingerprint_diagnostics(
         "available": True,
         "lexicon": "pyspellchecker English frequency lexicon (US spelling)",
         "method": (
-            f"Lowercase tokens of {MIN_TOKEN_LENGTH}+ letters missing from the lexicon, present in the target and in at "
-            f"least {MIN_CANDIDATE_WORKS} independent works by one candidate. misspelling_like: a known word is one edit "
-            "away. variant_spelling: a British form of a known US word (a convention, not an error). "
+            f"Lowercase tokens of {MIN_TOKEN_LENGTH}+ letters missing from the lexicon (URLs, TeX commands, and common "
+            f"mathematical or bibliographic abbreviations removed), present in the target and in at least "
+            f"{MIN_CANDIDATE_WORKS} independent works by one candidate. misspelling_like: {MIN_MISSPELLING_LENGTH}+ "
+            "letters with a known word one edit away. variant_spelling: a British form of a known US word (a convention, not an error). "
             "unrecognized_term: no nearby known word, usually technical vocabulary."
         ),
         "target_nonstandard_tokens": [
