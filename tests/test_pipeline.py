@@ -48,6 +48,27 @@ ATOM_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 class PublicCorpusTests(unittest.TestCase):
+    def test_long_paper_excerpt_parses_only_pages_under_the_windows(self) -> None:
+        pages = [_FakePage(f"PAGE{index:02d}\n" + "word " * 600) for index in range(30)]
+        excerpt, parsed = public_corpus._pdf_excerpt(pages)
+        touched = {index for index, page in enumerate(pages) if page.calls}
+        self.assertEqual(parsed, len(touched))
+        self.assertTrue({0, 5, 11, 17, 23} <= touched <= {0, 5, 6, 11, 12, 17, 18, 23, 24})
+        self.assertEqual(excerpt.count("[Excerpt jump]"), 4)
+        self.assertLessEqual(len(excerpt), public_corpus.MAX_EXCERPT_CHARS)
+        self.assertTrue(excerpt.startswith("PAGE00"))
+
+    def test_short_or_sparse_papers_keep_the_full_text_excerpt(self) -> None:
+        short = [_FakePage(f"Short page {index}. " + "text " * 300) for index in range(8)]
+        sparse = [_FakePage(f"Figure {index}.") for index in range(25)]
+        for pages in (short, sparse):
+            full = public_corpus._sample_body("\n\n".join(page.text or "" for page in pages))
+            for page in pages:
+                page.calls = 0
+            excerpt, parsed = public_corpus._pdf_excerpt(pages)
+            self.assertEqual(excerpt, full)
+            self.assertEqual(parsed, len(pages))
+
     def test_arxiv_pacing_counts_time_already_spent_downloading(self) -> None:
         for timeline, expected_sleep in (([100.0, 104.0, 105.0], None), ([100.0, 101.0, 102.0], 2.0)):
             with self.subTest(timeline=timeline):

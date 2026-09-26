@@ -14,7 +14,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from pypdf import PdfReader
 
@@ -28,6 +28,10 @@ ARXIV_QUERY_INTERVAL_SECONDS = 3.0
 CACHE_BOOKKEEPING_FIELDS = frozenset({"query_cached", "cached_full_text_samples", "query_warning"})
 MAX_PDF_BYTES = 12 * 1024 * 1024
 MAX_EXCERPT_CHARS = 7_000
+# Papers up to this length are parsed in full; longer ones only where excerpt windows fall.
+FULLY_EXTRACTED_PAGES = 12
+EXCERPT_WINDOWS = 5
+EXCERPT_SPAN = 0.78  # windows spread over the first 78% of a paper, as in _sample_body
 PROMPT_EXCERPT_CHARS = max(
     2_500, min(MAX_EXCERPT_CHARS, int(os.getenv("AUTHOR_ATTRIBUTION_PUBLIC_EXCERPT_CHARS", "2500")))
 )
@@ -172,9 +176,13 @@ def _distributed_selection(records: list[dict[str, Any]], maximum: int) -> list[
     return [historical[position] for position in positions]
 
 
-def _sample_body(text: str, limit: int = MAX_EXCERPT_CHARS) -> str:
+def _normalized_text(text: str) -> str:
     normalized = re.sub(r"[ \t]+", " ", text.replace("\x00", ""))
-    normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
+    return re.sub(r"\n{3,}", "\n\n", normalized).strip()
+
+
+def _sample_body(text: str, limit: int = MAX_EXCERPT_CHARS) -> str:
+    normalized = _normalized_text(text)
     if len(normalized) <= limit:
         return normalized
     window = max(150, limit // 5)
@@ -190,6 +198,49 @@ def _sample_body(text: str, limit: int = MAX_EXCERPT_CHARS) -> str:
                 piece = piece[newline + 1 :]
         pieces.append(piece.strip())
     return "\n\n[Excerpt jump]\n\n".join(pieces)[:limit]
+
+
+def _pdf_excerpt(pages: Sequence[Any], limit: int = MAX_EXCERPT_CHARS) -> tuple[str, int]:
+    """Build the distributed excerpt while parsing only the pages it draws from.
+
+    Each window sits at roughly the fraction of the paper that _sample_body uses
+    on the full text, located by page and in-page offset instead of by character,
+    and runs into the following page only when it needs more text. Short papers,
+    and papers whose sampled pages hold little text, are extracted in full.
+    Returns the excerpt and the number of pages parsed.
+    """
+    raw: dict[int, str] = {}
+
+    def page(index: int) -> str:
+        if index not in raw:
+            raw[index] = pages[index].extract_text() or ""
+        return raw[index]
+
+    def full_excerpt() -> tuple[str, int]:
+        return _sample_body("\n\n".join(page(index) for index in range(len(pages))), limit), len(pages)
+
+    if len(pages) <= FULLY_EXTRACTED_PAGES:
+        return full_excerpt()
+    window = max(150, limit // EXCERPT_WINDOWS)
+    pieces = []
+    for number in range(EXCERPT_WINDOWS):
+        position = number * EXCERPT_SPAN / (EXCERPT_WINDOWS - 1) * len(pages)
+        index = min(len(pages) - 1, int(position))
+        text = _normalized_text(page(index))
+        piece = text[int((position - index) * len(text)) :]
+        following = index + 1
+        while len(piece) < window + 180 and following < len(pages):
+            piece += "\n\n" + _normalized_text(page(following))
+            following += 1
+        piece = piece[:window]
+        if number:
+            newline = piece.find("\n")
+            if 0 <= newline < 180:
+                piece = piece[newline + 1 :]
+        pieces.append(piece.strip())
+    if sum(len(piece) for piece in pieces) < limit // 2:
+        return full_excerpt()
+    return "\n\n[Excerpt jump]\n\n".join(pieces)[:limit], len(raw)
 
 
 def _paper_cache_path(arxiv_id: str) -> Path:
@@ -210,21 +261,12 @@ def _paper_excerpt(record: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     if not payload.startswith(b"%PDF"):
         raise ValueError("arXiv did not return a readable PDF.")
     reader = PdfReader(io.BytesIO(payload))
-    page_count = len(reader.pages)
-    if page_count <= 45:
-        page_indexes = range(page_count)
-    else:
-        page_indexes = sorted(
-            set(range(18))
-            | set(range(max(18, page_count // 2 - 4), min(page_count, page_count // 2 + 4)))
-            | set(range(max(0, page_count - 10), page_count))
-        )
-    extracted = "\n\n".join(reader.pages[index].extract_text() or "" for index in page_indexes)
+    text, pages_sampled = _pdf_excerpt(reader.pages)
     sample = {
         **record,
-        "text": _sample_body(extracted),
-        "pages": page_count,
-        "pages_sampled": len(list(page_indexes)),
+        "text": text,
+        "pages": len(reader.pages),
+        "pages_sampled": pages_sampled,
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
     }
     cache_path.write_text(json.dumps(sample, ensure_ascii=False), encoding="utf-8")
