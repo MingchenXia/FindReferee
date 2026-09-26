@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -88,6 +89,69 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual((calibration["case_count"], calibration["run_count"]), (2, 4))
         self.assertLess(calibration["case_count"], app.MIN_CALIBRATION_CASES)
 
+
+    @staticmethod
+    def _result(alice: float, bob: float) -> dict:
+        return {
+            **RESULT,
+            "candidate_evaluations": [
+                {"candidate": "Alice Author", "probability": alice},
+                {"candidate": "Bob Writer", "probability": bob},
+            ],
+            "no_listed_candidate_probability": round(1 - alice - bob, 6),
+        }
+
+    def test_runs_are_labeled_and_compare_pairs_the_shared_cases(self) -> None:
+        with patch.object(app, "_perform_analysis", new=AsyncMock(side_effect=[self._result(0.4, 0.5)] * 4)):
+            self._main("run", "--repeat", "2", "--label", "before", "--model", "gpt-test")
+        runs = [json.loads(path.read_text(encoding="utf-8")) for path in (self.root / "alpha" / "runs").glob("*.json")]
+        self.assertEqual({run["_benchmark"]["label"] for run in runs}, {"before"})
+        self.assertTrue(all(run["_benchmark"]["model"] == "gpt-test" for run in runs))
+        # The candidate version favors Alice more strongly and is slightly noisy between runs.
+        after = [self._result(0.7, 0.2), self._result(0.66, 0.24), self._result(0.7, 0.2), self._result(0.66, 0.24)]
+        with patch.object(app, "_perform_analysis", new=AsyncMock(side_effect=after)):
+            self._main("run", "--repeat", "2", "--label", "after", "--model", "gpt-test")
+
+        before_only = json.loads(self._main("score", "--json", "--label", "before", "--runs", "all"))
+        self.assertEqual(before_only["aggregate"]["case_count"], 4)
+        report = json.loads(self._main("compare", "--baseline", "before", "--candidate", "after", "--json"))
+        self.assertEqual(report["paired_cases"], 2)
+        metrics = {row["key"]: row for row in report["metrics"]}
+        self.assertAlmostEqual(metrics["top1_accuracy"]["baseline"], 0.5)
+        self.assertAlmostEqual(metrics["top1_accuracy"]["candidate"], 0.5)
+        self.assertEqual(metrics["top1_accuracy"]["verdict"], "same")
+        cases = {row["case"]: row for row in report["cases"]}
+        self.assertAlmostEqual(cases["alpha"]["change"], 0.28)
+        self.assertEqual(cases["alpha"]["direction"], "improved")
+        self.assertEqual(cases["beta"]["direction"], "worsened")
+        self.assertAlmostEqual(cases["alpha"]["run_to_run_spread"], 0.04)
+        text = self._main("compare", "--baseline", "before", "--candidate", "after")
+        self.assertIn("improved in 1, worsened in 1", text)
+
+    def test_small_changes_are_reported_as_run_to_run_spread(self) -> None:
+        with patch.object(app, "_perform_analysis", new=AsyncMock(side_effect=[self._result(0.5, 0.4), self._result(0.6, 0.3)] * 2)):
+            self._main("run", "--repeat", "2", "--label", "before", "--model", "gpt-test")
+        with patch.object(app, "_perform_analysis", new=AsyncMock(side_effect=[self._result(0.52, 0.38), self._result(0.62, 0.28)] * 2)):
+            self._main("run", "--repeat", "2", "--label", "after", "--model", "gpt-test")
+        report = json.loads(self._main("compare", "--baseline", "before", "--candidate", "after", "--json", "--cases", "alpha"))
+        self.assertEqual(report["cases"][0]["direction"], "within run-to-run spread")
+
+    def test_older_app_versions_parse_files_like_the_current_one(self) -> None:
+        folder = self.root / "alpha"
+        (folder / "bom.txt").write_bytes("\ufeffText with a byte-order mark. ".encode("utf-8") * 3_000)
+        legacy = types.SimpleNamespace(SUPPORTED_EXTENSIONS=app.SUPPORTED_EXTENSIONS, _trim=app._trim)
+        with patch.object(benchmark, "app", app):
+            current = benchmark._document(folder, "bom.txt")
+        with patch.object(benchmark, "app", legacy):
+            self.assertEqual(benchmark._document(folder, "bom.txt"), current)
+        self.assertTrue(current["truncated"])
+
+    def test_a_second_app_version_needs_its_own_process(self) -> None:
+        with tempfile.TemporaryDirectory() as other:
+            (Path(other) / "app.py").write_text("", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                benchmark._load_app(Path(other))
+        self.assertIs(benchmark._load_app(Path(app.__file__).parent), app)
 
 if __name__ == "__main__":
     unittest.main()

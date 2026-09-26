@@ -1,4 +1,4 @@
-"""Run, score, and calibrate FindReferee on private labeled cases.
+"""Run, score, compare, and calibrate FindReferee on private labeled cases.
 
 Each case is a folder under benchmarks/ (gitignored) with a case.json such as:
 
@@ -17,25 +17,33 @@ Each case is a folder under benchmarks/ (gitignored) with a case.json such as:
     }
 
 "target_text" may replace "target". Only the inputs reach the analysis; the
-expected label and label status are read solely by the scorer. Usage:
+expected label and label status are read solely by the scorer.
 
-    python benchmark.py run [--cases NAME ...] [--repeat N] [--model M] [--effort E]
-    python benchmark.py score [--cases NAME ...] [--runs latest|all] [--confirmed-only] [--json]
-    python benchmark.py fit-calibration --output calibration.json [--confirmed-only]
+Every run is saved under <case>/runs/ with a label (by default the git revision
+of the app version that produced it), so two versions can be compared on the
+same cases. --app-dir runs another checkout's app.py, for example an older
+revision checked out with `git worktree add`.
+
+    python benchmark.py run [--cases NAME ...] [--repeat N] [--label L] [--app-dir DIR] [--model M] [--effort E]
+    python benchmark.py score [--label L] [--runs latest|all] [--confirmed-only] [--json]
+    python benchmark.py compare --baseline L1 --candidate L2 [--confirmed-only] [--json]
+    python benchmark.py fit-calibration --output calibration.json [--label L] [--confirmed-only]
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
+import io
 import json
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import app
 from evaluation_metrics import (
     NO_LISTED_CANDIDATE,
     aggregate_scores,
@@ -46,8 +54,41 @@ from evaluation_metrics import (
 )
 
 
-DEFAULT_ROOT = app.APP_DIR / "benchmarks"
+HERE = Path(__file__).resolve().parent
+DEFAULT_ROOT = HERE / "benchmarks"
 LABEL_FIELDS = {"expected_author", "label_status"}
+FALLBACK_STRATEGY = "safe timeout fallback"
+UNLABELED = "unlabeled"
+# The app module under test: this checkout's app.py unless --app-dir names another.
+app: Any = None
+
+
+def _load_app(app_dir: Path) -> Any:
+    """Import app.py from app_dir so the same cases can run against another version."""
+    app_dir = app_dir.resolve()
+    loaded = sys.modules.get("app")
+    if loaded is not None:
+        if Path(loaded.__file__).resolve().parent != app_dir:
+            raise SystemExit(f"app.py is already loaded from {Path(loaded.__file__).parent}; run one version per process.")
+        return loaded
+    if not (app_dir / "app.py").is_file():
+        raise SystemExit(f"{app_dir} does not contain app.py.")
+    # First on the path, so the version's own stylometry, corpus, and citation modules load with it.
+    sys.path.insert(0, str(app_dir))
+    return importlib.import_module("app")
+
+
+def _revision(app_dir: Path) -> str:
+    def git(*arguments: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(app_dir), *arguments], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    try:
+        revision = git("rev-parse", "--short", "HEAD")
+        return f"{revision}-dirty" if git("status", "--porcelain", "--untracked-files=no") else revision
+    except (OSError, subprocess.CalledProcessError):
+        return UNLABELED
 
 
 def _cases(root: Path, names: list[str] | None) -> list[Path]:
@@ -72,7 +113,24 @@ def _document(folder: Path, relative: str) -> dict[str, Any]:
     suffix = path.suffix.lower()
     if suffix not in app.SUPPORTED_EXTENSIONS:
         raise SystemExit(f"{path} is not a supported file type.")
-    return app._parse_upload_payload(path.name, suffix, path.read_bytes())
+    payload = path.read_bytes()
+    parse = getattr(app, "_parse_upload_payload", None)
+    if parse is not None:
+        return parse(path.name, suffix, payload)
+    # Older versions parsed inside the upload handler; this mirrors that code.
+    metadata: dict[str, str] = {}
+    if suffix == ".pdf":
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(payload))
+        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        for key, value in (reader.metadata or {}).items():
+            if value is not None and str(value).strip():
+                metadata[str(key).lstrip("/")] = str(value).strip()
+    else:
+        text = payload.decode("utf-8-sig")
+    text, truncated = app._trim(text)
+    return {"name": path.name, "text": text, "truncated": truncated, "metadata": metadata, "format": suffix.lstrip(".")}
 
 
 def _analysis_inputs(folder: Path, case: dict[str, Any], model: str, effort: str) -> dict[str, Any]:
@@ -152,9 +210,14 @@ def _run_case(folder: Path, inputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def command_run(args: argparse.Namespace) -> int:
+    revision = _revision(args.app_dir)
+    label = args.label or revision
+    model = args.model or app.CODEX_MODEL
+    effort = args.effort or app.CODEX_REASONING_EFFORT
+    print(f"Running app from {args.app_dir.resolve()} as label {label!r} with {model} at {effort}.", file=sys.stderr)
     for folder in _cases(args.root, args.cases):
         try:
-            inputs = _analysis_inputs(folder, _read_case(folder), args.model, args.effort)
+            inputs = _analysis_inputs(folder, _read_case(folder), model, effort)
         except app.HTTPException as exc:
             raise SystemExit(f"{folder.name}: {exc.detail}") from exc
         runs = folder / "runs"
@@ -162,54 +225,93 @@ def command_run(args: argparse.Namespace) -> int:
         for repetition in range(args.repeat):
             result = _run_case(folder, inputs)
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            result["_benchmark"] = {
+                "label": label,
+                "revision": revision,
+                "app_dir": str(args.app_dir.resolve()),
+                "model": model,
+                "effort": effort,
+                "saved_at": stamp,
+            }
             path = runs / f"{stamp}.json"
             path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[{folder.name}] run {repetition + 1}/{args.repeat} saved to {path}", file=sys.stderr)
     return 0
 
 
-def _scored_runs(args: argparse.Namespace) -> list[tuple[str, dict[str, Any], str, list[Path]]]:
-    """(case name, case, expected label, run files) for every case that has runs."""
-    selected = []
+def _label_of(result: dict[str, Any]) -> str:
+    return str((result.get("_benchmark") or {}).get("label") or UNLABELED)
+
+
+def _case_runs(args: argparse.Namespace, label: str | None) -> dict[str, tuple[str, list[tuple[str, dict[str, Any]]]]]:
+    """case name -> (expected label, [(run name, result)]) for cases that have matching runs."""
+    selected: dict[str, tuple[str, list[tuple[str, dict[str, Any]]]]] = {}
     for folder in _cases(args.root, args.cases):
         case = _read_case(folder)
         if args.confirmed_only and case.get("label_status", "confirmed") != "confirmed":
             continue
-        run_files = sorted((folder / "runs").glob("*.json"))
-        if not run_files:
-            print(f"[{folder.name}] no saved runs; skipped", file=sys.stderr)
-            continue
-        if args.runs == "latest":
-            run_files = run_files[-1:]
-        selected.append((folder.name, case, str(case["expected_author"]), run_files))
+        runs = [(path.stem, json.loads(path.read_text(encoding="utf-8"))) for path in sorted((folder / "runs").glob("*.json"))]
+        if label is not None:
+            runs = [(name, result) for name, result in runs if _label_of(result) == label]
+        if getattr(args, "runs", "all") == "latest":
+            runs = runs[-1:]
+        if runs:
+            selected[folder.name] = (str(case["expected_author"]), runs)
+        else:
+            print(f"[{folder.name}] no saved runs{f' labeled {label!r}' if label else ''}; skipped", file=sys.stderr)
     return selected
 
 
-def command_score(args: argparse.Namespace) -> int:
-    rows: list[dict[str, Any]] = []
-    stability: dict[str, Any] = {}
-    for name, _case, expected, run_files in _scored_runs(args):
-        results = [json.loads(path.read_text(encoding="utf-8")) for path in run_files]
-        for path, result in zip(run_files, results):
+def _score_rows(case_runs: dict[str, tuple[str, list[tuple[str, dict[str, Any]]]]]) -> list[dict[str, Any]]:
+    rows = []
+    for case, (expected, runs) in case_runs.items():
+        for run, result in runs:
             distribution = probability_distribution(result)
             if expected not in distribution:
-                print(f"[{name}] expected label {expected!r} is not among {sorted(distribution)}", file=sys.stderr)
-            score = score_case(result, expected)
-            leader = max(distribution, key=distribution.get) if distribution else ""
-            rows.append({"case": name, "run": path.stem, "expected": expected, "leader": leader, **score})
-        if len(results) > 1:
-            stability[name] = repeated_run_stability(results)
-    report = {"cases": rows, "aggregate": aggregate_scores(rows), "repeated_run_stability": stability}
+                print(f"[{case}] expected label {expected!r} is not among {sorted(distribution)}", file=sys.stderr)
+            rows.append(
+                {
+                    "case": case,
+                    "run": run,
+                    "label": _label_of(result),
+                    "expected": expected,
+                    "leader": max(distribution, key=distribution.get) if distribution else "",
+                    "elapsed_seconds": float(result.get("total_elapsed_seconds") or 0.0),
+                    "fallback": result.get("review_strategy") == FALLBACK_STRATEGY,
+                    **score_case(result, expected),
+                }
+            )
+    return rows
+
+
+def _summary(case_runs: dict[str, tuple[str, list[tuple[str, dict[str, Any]]]]]) -> dict[str, Any]:
+    rows = _score_rows(case_runs)
+    stability = {
+        case: repeated_run_stability([result for _, result in runs])
+        for case, (_, runs) in case_runs.items()
+        if len(runs) > 1
+    }
+    summary: dict[str, Any] = dict(aggregate_scores(rows))
+    summary["mean_elapsed_minutes"] = sum(row["elapsed_seconds"] for row in rows) / len(rows) / 60 if rows else 0.0
+    summary["fallback_rate"] = sum(row["fallback"] for row in rows) / len(rows) if rows else 0.0
+    summary["mean_pairwise_js_divergence"] = (
+        sum(values["mean_pairwise_js_divergence"] for values in stability.values()) / len(stability) if stability else None
+    )
+    return {"rows": rows, "aggregate": summary, "repeated_run_stability": stability}
+
+
+def command_score(args: argparse.Namespace) -> int:
+    report = _summary(_case_runs(args, args.label))
+    rows, aggregate = report["rows"], report["aggregate"]
     if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps({"cases": rows, **{key: value for key, value in report.items() if key != "rows"}}, ensure_ascii=False, indent=2))
         return 0
     for row in rows:
         print(
-            f"{row['case']:<24} {row['run']:<24} expected {row['expected']!r}: "
+            f"{row['case']:<24} {row['label']:<14} {row['run']:<24} expected {row['expected']!r}: "
             f"{row['expected_probability']:.0%}, rank {row['expected_rank']}, leader {row['leader']!r}, "
             f"{row['determination_status']}"
         )
-    aggregate = report["aggregate"]
     if aggregate.get("case_count"):
         print(
             f"\n{aggregate['case_count']} scored run(s): unique Top-1 {aggregate['top1_accuracy']:.0%}, "
@@ -217,8 +319,131 @@ def command_score(args: argparse.Namespace) -> int:
             f"MRR {aggregate['mean_reciprocal_rank']:.3f}, mean log loss {aggregate['mean_log_loss']:.3f}, "
             f"false precise claims {aggregate['false_precise_claim_rate']:.0%}"
         )
-    for name, values in stability.items():
+    for name, values in report["repeated_run_stability"].items():
         print(f"{name}: mean pairwise Jensen-Shannon divergence {values['mean_pairwise_js_divergence']:.4f} over {values['run_count']} runs")
+    return 0
+
+
+# (key, display name, True if higher is better / False if lower / None if neutral, format)
+COMPARISON_METRICS = (
+    ("top1_accuracy", "Unique Top-1", True, "percent"),
+    ("top1_including_ties_accuracy", "Top-1 including ties", True, "percent"),
+    ("mean_expected_probability", "Mean expected-author probability", True, "percent"),
+    ("mean_true_class_margin", "Mean true-author margin", True, "points"),
+    ("mean_reciprocal_rank", "Mean reciprocal rank", True, "decimal"),
+    ("mean_log_loss", "Mean log loss", False, "decimal"),
+    ("mean_brier_score", "Mean Brier score", False, "decimal"),
+    ("false_precise_claim_rate", "False precise claims", False, "percent"),
+    ("precise_claim_coverage", "Precise-claim coverage", None, "percent"),
+    ("unable_to_determine_rate", "Unable-to-determine rate", None, "percent"),
+    ("mean_pairwise_js_divergence", "Run-to-run divergence (JS)", False, "fine"),
+    ("fallback_rate", "Safe-fallback runs", False, "percent"),
+    ("mean_elapsed_minutes", "Mean analysis time (minutes)", False, "minutes"),
+)
+
+
+def _format(value: float | None, style: str, *, signed: bool = False) -> str:
+    if value is None:
+        return "n/a"
+    sign = "+" if signed and value > 0 else ""
+    if style == "percent":
+        return f"{sign}{value * 100:.1f}{' pts' if signed else '%'}"
+    if style == "points":
+        return f"{sign}{value * 100:.1f} pts"
+    if style == "minutes":
+        return f"{sign}{value:.1f}"
+    if style == "fine":
+        return f"{sign}{value:.4f}"
+    return f"{sign}{value:.3f}"
+
+
+def command_compare(args: argparse.Namespace) -> int:
+    baseline = _case_runs(args, args.baseline)
+    candidate = _case_runs(args, args.candidate)
+    shared = sorted(set(baseline) & set(candidate))
+    if not shared:
+        raise SystemExit(f"No case has runs labeled both {args.baseline!r} and {args.candidate!r}.")
+    unpaired = sorted(set(baseline) ^ set(candidate))
+    before = _summary({case: baseline[case] for case in shared})
+    after = _summary({case: candidate[case] for case in shared})
+
+    metrics = []
+    for key, name, higher_is_better, style in COMPARISON_METRICS:
+        old, new = before["aggregate"].get(key), after["aggregate"].get(key)
+        change = None if old is None or new is None else new - old
+        verdict = "n/a" if change is None else "same" if abs(change) < 1e-9 else "neutral" if higher_is_better is None else (
+            "better" if (change > 0) == higher_is_better else "worse"
+        )
+        metrics.append({"metric": name, "key": key, "baseline": old, "candidate": new, "change": change, "verdict": verdict, "style": style})
+
+    cases = []
+    for case in shared:
+        expected = baseline[case][0]
+        old_rows = [row for row in before["rows"] if row["case"] == case]
+        new_rows = [row for row in after["rows"] if row["case"] == case]
+        old_probabilities = [row["expected_probability"] for row in old_rows]
+        new_probabilities = [row["expected_probability"] for row in new_rows]
+        old_mean = sum(old_probabilities) / len(old_probabilities)
+        new_mean = sum(new_probabilities) / len(new_probabilities)
+        # A change smaller than either version's own run-to-run spread is not distinguishable from noise.
+        spread = max(max(old_probabilities) - min(old_probabilities), max(new_probabilities) - min(new_probabilities))
+        repeated = len(old_rows) > 1 and len(new_rows) > 1
+        change = new_mean - old_mean
+        cases.append(
+            {
+                "case": case,
+                "expected": expected,
+                "baseline_probability": old_mean,
+                "candidate_probability": new_mean,
+                "change": change,
+                "baseline_top1_rate": sum(row["top1_correct"] for row in old_rows) / len(old_rows),
+                "candidate_top1_rate": sum(row["top1_correct"] for row in new_rows) / len(new_rows),
+                "baseline_status": sorted({row["determination_status"] for row in old_rows}),
+                "candidate_status": sorted({row["determination_status"] for row in new_rows}),
+                "run_to_run_spread": spread if repeated else None,
+                "direction": (
+                    "within run-to-run spread" if repeated and abs(change) <= spread
+                    else "improved" if change > 0.005 else "worsened" if change < -0.005 else "unchanged"
+                ),
+            }
+        )
+    report = {
+        "baseline": args.baseline,
+        "candidate": args.candidate,
+        "paired_cases": len(shared),
+        "unpaired_cases": unpaired,
+        "baseline_runs": before["aggregate"].get("case_count", 0),
+        "candidate_runs": after["aggregate"].get("case_count", 0),
+        "metrics": metrics,
+        "cases": cases,
+    }
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    print(
+        f"{args.baseline} ({report['baseline_runs']} runs) vs {args.candidate} ({report['candidate_runs']} runs) "
+        f"on {len(shared)} paired case(s)" + (f"; not paired: {', '.join(unpaired)}" if unpaired else "")
+    )
+    print(f"\n{'Metric':<34}{'Baseline':>12}{'Candidate':>12}{'Change':>13}  Verdict")
+    for row in metrics:
+        print(
+            f"{row['metric']:<34}{_format(row['baseline'], row['style']):>12}{_format(row['candidate'], row['style']):>12}"
+            f"{_format(row['change'], row['style'], signed=True):>13}  {row['verdict']}"
+        )
+    print(f"\n{'Case':<24}{'Expected author':<26}{'Baseline':>10}{'Candidate':>11}  Direction")
+    for row in cases:
+        print(
+            f"{row['case']:<24}{row['expected'][:25]:<26}{row['baseline_probability']:>10.1%}{row['candidate_probability']:>11.1%}"
+            f"  {row['direction']}"
+        )
+    directions = [row["direction"] for row in cases]
+    print(
+        f"\nExpected-author probability improved in {directions.count('improved')}, worsened in "
+        f"{directions.count('worsened')}, and was unchanged or within run-to-run spread in "
+        f"{len(directions) - directions.count('improved') - directions.count('worsened')} of {len(cases)} case(s)."
+    )
+    if not all(row["run_to_run_spread"] is not None for row in cases):
+        print("Run each version with --repeat 3 or more to tell real changes from run-to-run variation.")
     return 0
 
 
@@ -226,10 +451,9 @@ def command_fit_calibration(args: argparse.Namespace) -> int:
     pairs = []
     models = set()
     case_names = set()
-    for name, _case, expected, run_files in _scored_runs(args):
-        for path in run_files:
-            result = json.loads(path.read_text(encoding="utf-8"))
-            if result.get("review_strategy") == "safe timeout fallback":
+    for name, (expected, runs) in _case_runs(args, args.label).items():
+        for _run, result in runs:
+            if result.get("review_strategy") == FALLBACK_STRATEGY:
                 continue  # A non-determination carries no model distribution to calibrate.
             models.add(str(result.get("model", "")))
             case_names.add(name)
@@ -237,17 +461,18 @@ def command_fit_calibration(args: argparse.Namespace) -> int:
     if not pairs:
         raise SystemExit("No completed runs are available to fit a calibration.")
     if len(models) > 1:
-        raise SystemExit(f"Runs come from several models ({', '.join(sorted(models))}); fit one model at a time with --cases.")
+        raise SystemExit(f"Runs come from several models ({', '.join(sorted(models))}); fit one model at a time with --label.")
     fitted = fit_temperature(pairs)
     # Repeated runs of one case are correlated, so the app's minimum counts distinct cases.
     fitted.update({"case_count": len(case_names), "run_count": len(pairs)})
     fitted.update({"model": models.pop(), "fitted_at": datetime.now(timezone.utc).isoformat(), "no_listed_label": NO_LISTED_CANDIDATE})
     args.output.write_text(json.dumps(fitted, indent=2), encoding="utf-8")
     print(json.dumps(fitted, indent=2))
-    if fitted["case_count"] < app.MIN_CALIBRATION_CASES:
+    minimum = getattr(app, "MIN_CALIBRATION_CASES", 20)
+    if fitted["case_count"] < minimum:
         print(
-            f"Warning: {fitted['case_count']} run(s) is below the {app.MIN_CALIBRATION_CASES} the app requires; "
-            "the file will be ignored until more labeled runs are added.",
+            f"Warning: {fitted['case_count']} case(s) is below the {minimum} the app requires; "
+            "the file will be ignored until more labeled cases are added.",
             file=sys.stderr,
         )
     return 0
@@ -256,32 +481,42 @@ def command_fit_calibration(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Folder that contains the case folders.")
+    parser.add_argument("--app-dir", type=Path, default=HERE, help="Checkout whose app.py runs the analysis.")
     commands = parser.add_subparsers(dest="command", required=True)
 
     run = commands.add_parser("run", help="Analyze cases and save each result under <case>/runs/.")
     run.add_argument("--cases", nargs="*")
     run.add_argument("--repeat", type=int, default=1, help="Independent runs per case, for stability.")
-    run.add_argument("--model", default=app.CODEX_MODEL)
-    run.add_argument("--effort", default=app.CODEX_REASONING_EFFORT)
+    run.add_argument("--label", help="Name for these runs (default: the app checkout's git revision).")
+    run.add_argument("--model", help="Model (default: the app's CODEX_MODEL).")
+    run.add_argument("--effort", help="Reasoning strength (default: the app's CODEX_REASONING_EFFORT).")
     run.set_defaults(handler=command_run)
 
     for name, handler, help_text in (
         ("score", command_score, "Score saved runs against the withheld labels."),
+        ("compare", command_compare, "Compare two labeled sets of runs on the cases they share."),
         ("fit-calibration", command_fit_calibration, "Fit a temperature from saved runs."),
     ):
         sub = commands.add_parser(name, help=help_text)
         sub.add_argument("--cases", nargs="*")
-        sub.add_argument("--runs", choices=("latest", "all"), default="latest" if name == "score" else "all")
         sub.add_argument("--confirmed-only", action="store_true", help="Skip cases whose label is only a belief.")
-        if name == "score":
-            sub.add_argument("--json", action="store_true")
+        if name == "compare":
+            sub.add_argument("--baseline", required=True, help="Run label to compare from.")
+            sub.add_argument("--candidate", required=True, help="Run label to compare to.")
         else:
+            sub.add_argument("--label", help="Only use runs with this label.")
+            sub.add_argument("--runs", choices=("latest", "all"), default="latest" if name == "score" else "all")
+        if name == "fit-calibration":
             sub.add_argument("--output", type=Path, required=True)
+        else:
+            sub.add_argument("--json", action="store_true")
         sub.set_defaults(handler=handler)
 
     args = parser.parse_args(argv)
     if getattr(args, "repeat", 1) < 1:
         parser.error("--repeat must be at least 1.")
+    global app
+    app = _load_app(args.app_dir)
     return args.handler(args)
 
 
