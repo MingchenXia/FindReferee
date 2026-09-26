@@ -26,6 +26,7 @@ from citation_network import (
     citation_network_prompt_section,
     collect_citation_network,
 )
+from impostors import build_impostor_diagnostics, impostor_prompt_section
 from public_corpus import collect_arxiv_corpora, corpus_followup_section, corpus_prompt_section
 from review_voice import build_review_voice_diagnostics, review_voice_prompt_section
 from stylometry import build_stylometry_diagnostics, stylometry_prompt_section, view_family_leaders
@@ -78,6 +79,10 @@ PUBLIC_CORPUS_ENABLED = os.getenv("AUTHOR_ATTRIBUTION_PUBLIC_CORPUS", "true").lo
 PUBLIC_CORPUS_MAX_RESULTS = max(10, min(120, int(os.getenv("AUTHOR_ATTRIBUTION_PUBLIC_METADATA_RESULTS", "80"))))
 PUBLIC_CORPUS_MAX_FULL_TEXTS = max(1, min(8, int(os.getenv("AUTHOR_ATTRIBUTION_PUBLIC_FULL_TEXTS", "8"))))
 CITATION_NETWORK_ENABLED = os.getenv("AUTHOR_ATTRIBUTION_CITATION_NETWORK", "true").lower() not in {"0", "false", "no"}
+# Outside same-field authors (from the citation network) whose public solo works
+# serve as General Impostors; 0 disables outside impostors.
+IMPOSTOR_AUTHORS = max(0, min(8, int(os.getenv("AUTHOR_ATTRIBUTION_IMPOSTOR_AUTHORS", "4"))))
+IMPOSTOR_PAPERS_PER_AUTHOR = 3
 # The neutral feature ledger depends only on the target prose, so it can run
 # while citation tracing, identity checks, and corpus collection proceed. Set
 # false to keep every model call strictly sequential.
@@ -606,6 +611,44 @@ def _candidate_identity_aliases(
             unique.append(alias)
             seen.add(key)
     return unique
+
+
+def _impostor_author_names(
+    citation_diagnostics: dict[str, Any] | None,
+    candidate_list: list[str],
+    candidate_profiles: dict[str, Any],
+    limit: int,
+) -> list[str]:
+    """Choose outside citation-network authors whose solo works can act as impostors.
+
+    Only full names are used because the arXiv collector needs an exact sole
+    byline, and anyone who could be a listed candidate's namesake is skipped.
+    """
+    aliases = [
+        alias
+        for label in candidate_list
+        for alias in _candidate_identity_aliases(label, candidate_profiles.get(label))
+    ]
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in (citation_diagnostics or {}).get("candidates") or []:
+        if len(names) >= limit:
+            break
+        if not isinstance(item, dict) or item.get("listed_candidate"):
+            continue
+        name = re.sub(r"\s+", " ", str(item.get("display_name", ""))).strip()
+        parts = name.split()
+        key = _fold_identity_name(name)
+        if (
+            len(parts) < 2
+            or any(len(part.rstrip(".")) < 2 for part in parts[:-1])
+            or key in seen
+            or any(_possible_name_collision(alias, name) for alias in aliases)
+        ):
+            continue
+        names.append(name)
+        seen.add(key)
+    return names
 
 
 def _context_declared_manuscript_authors(context_note: str) -> list[str]:
@@ -1446,6 +1489,7 @@ A review-voice leader based on only one reference report is low-data sensitivity
 
 When a deterministic multi-view stylometry packet is present, treat it as a reproducible cross-check rather than a probability model. Agreement across character n-grams, Burrows Delta, and function-word Delta is useful supporting evidence, especially for a reasonably long target; disagreement is itself a warning about topic, genre, extraction noise, or sample instability. If the target is a short referee report but the comparison corpus consists of formal research papers, all of these cross-genre stylometry views together count as one weak sensitivity check, not multiple direct evidence families, and should normally contribute no more than about 10% of the comparative decision unless a rare error independently recurs. Never let one distance metric override repeated rare-error matches, verified reviewer-role conflicts, strong provenance, or clear counterevidence.
 The topic-masked character view (text distortion) replaces every non-function word with asterisks of the same length before comparing character n-grams, so subject vocabulary cannot drive it. It is the deterministic counterpart of the expertise-ablation check: if its leader differs from the raw character leader, treat the raw character agreement as likely topic-driven. Raw character n-grams, topic-masked character n-grams, and length-matched windows form one correlated character family and never count as separate votes.
+When a General Impostors packet is present, it repeats a nearest-author comparison over 100 random halves of the character 4-gram features (Koppel & Winter 2014), using public solo works of the listed candidates and of outside same-field authors from the citation network. Its external_impostor_win_rate is a reproducible reference for the no-listed-candidate alternative: a high rate is one weak affirmative signal that the listed candidates may fit poorly, and a leader that rarely beats the outside impostors should not be called precise on stylometric grounds. It is correlated with the character family, cross-genre for a referee-report target, and never proof.
 For a target under 200 words, the packet may also include a length-matched character-window sensitivity check. It reduces the distortion from comparing a tiny report directly with full papers, but it is correlated with the ordinary character n-gram view. Use its separation to assess short-sample stability; never count those two character views as independent evidence families.
 
 Deterministic phrase-overlap precheck (RapidFuzz; diagnostic only, not an authorship score):
@@ -3466,6 +3510,10 @@ async def _perform_analysis(
                     ],
                 )
         review_voice_section = review_voice_prompt_section(review_voice_diagnostics)
+        impostor_diagnostics: dict[str, Any] = {
+            "available": False,
+            "reason": "No automatic public corpus was available.",
+        }
         if PUBLIC_CORPUS_ENABLED:
             _emit_progress(progress, "Collecting reusable public solo-work corpus")
             public_corpora, public_corpus_diagnostics = await asyncio.to_thread(
@@ -3476,6 +3524,35 @@ async def _perform_analysis(
                 progress=progress,
             )
             public_corpus_diagnostics["enabled"] = True
+            impostor_corpora: dict[str, list[dict[str, Any]]] = {}
+            if controls.get("disable_outside_candidates"):
+                impostor_note = "Outside-candidate exploration is off, so no outside impostor corpus was collected."
+            else:
+                impostor_names = _impostor_author_names(
+                    citation_network_diagnostics, candidate_list, candidate_profiles, IMPOSTOR_AUTHORS
+                )
+                impostor_note = (
+                    ""
+                    if impostor_names
+                    else "The citation network supplied no eligible outside same-field author."
+                    if IMPOSTOR_AUTHORS
+                    else "Outside impostors are disabled (AUTHOR_ATTRIBUTION_IMPOSTOR_AUTHORS=0)."
+                )
+                if impostor_names:
+                    _emit_progress(
+                        progress,
+                        "Collecting same-field impostor corpus",
+                        [
+                            "Outside same-field comparison authors from the citation network: "
+                            f"{' · '.join(impostor_names)}. They test whether an unlisted author fits better."
+                        ],
+                    )
+                    impostor_corpora, _ = await asyncio.to_thread(
+                        collect_arxiv_corpora,
+                        impostor_names,
+                        max_results_per_candidate=PUBLIC_CORPUS_MAX_RESULTS,
+                        max_full_text_papers_per_candidate=IMPOSTOR_PAPERS_PER_AUTHOR,
+                    )
             collected_public_section = corpus_prompt_section(public_corpora, public_corpus_diagnostics)
             followup_corpus_section = corpus_followup_section(public_corpora)
             public_overlap_note = await asyncio.to_thread(
@@ -3514,6 +3591,34 @@ async def _perform_analysis(
                         + short_sample_clue
                     ],
                 )
+            # Private samples are left out so candidates and impostors are compared
+            # on the same genre of public solo work.
+            impostor_diagnostics = await asyncio.to_thread(
+                build_impostor_diagnostics, document.get("text", ""), public_corpora, impostor_corpora
+            )
+            if impostor_note:
+                impostor_diagnostics["impostor_collection_note"] = impostor_note
+            collected_public_section += (
+                "\n\nDeterministic General Impostors verification (supporting evidence only):\n"
+                + impostor_prompt_section(impostor_diagnostics)
+            )
+            if impostor_diagnostics.get("available"):
+                impostor_leader = impostor_diagnostics["leader"]
+                outside_rate = impostor_diagnostics.get("external_impostor_win_rate")
+                _emit_progress(
+                    progress,
+                    "General Impostors cross-check ready",
+                    [
+                        f"General Impostors check: {impostor_leader} was closest in "
+                        f"{impostor_diagnostics['candidates'][impostor_leader]['attribution_share']:.0%} of feature subsets"
+                        + (
+                            f"; an unlisted same-field author was closest in {outside_rate:.0%}."
+                            if outside_rate is not None
+                            else "; no outside impostor corpus was available."
+                        )
+                        + " This is an uncalibrated reference, not a verdict."
+                    ],
+                )
         # The three prompt variants below differ only in their public-corpus
         # packet, so the deterministic prechecks run once, off the event loop.
         prompt_diagnostics = await asyncio.to_thread(
@@ -3546,6 +3651,8 @@ async def _perform_analysis(
             "source-backed dossier here; run targeted web verification when a material claim remains disputed."
             "\n\nDeterministic multi-view stylometry results retained from the full corpus:\n"
             + stylometry_prompt_section(stylometry_diagnostics)
+            + "\n\nDeterministic General Impostors verification retained from the full corpus:\n"
+            + impostor_prompt_section(impostor_diagnostics)
             + "\n\nCompact distributed raw-text windows retained for direct verification in focused rounds:\n"
             + followup_corpus_section
         )
@@ -3554,6 +3661,8 @@ async def _perform_analysis(
             "Audit their source-backed reports; run a live search only for a material unresolved fact."
             "\n\nDeterministic multi-view stylometry results retained from the full corpus:\n"
             + stylometry_prompt_section(stylometry_diagnostics)
+            + "\n\nDeterministic General Impostors verification retained from the full corpus:\n"
+            + impostor_prompt_section(impostor_diagnostics)
         )
         followup_prompt = _attribution_prompt(
             candidate_list,
@@ -3673,6 +3782,7 @@ async def _perform_analysis(
         result["public_corpus"] = public_corpus_diagnostics
         result["citation_network"] = citation_network_diagnostics
         result["deterministic_stylometry"] = stylometry_diagnostics
+        result["deterministic_impostors"] = impostor_diagnostics
         result["deterministic_review_voice"] = review_voice_diagnostics
         result["provider"] = provider
         result["model"] = model

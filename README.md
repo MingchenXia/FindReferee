@@ -19,7 +19,8 @@ It can also compare several documents for likely common authorship.
 - Lower prose weight for 2026-and-later work that may have been AI-polished; stronger weight for original pre-2026 solo work
 - PDF metadata and low-weight TeX-habit analysis
 - Time-truncated direct and second-order citation-network candidate priors, with prior-collaborator penalties
-- Offline RapidFuzz overlap checks, character n-grams, Burrows Delta, function-word Delta, review-voice distance, and Lingua language detection
+- Offline RapidFuzz overlap checks, character n-grams, topic-masked character n-grams (text distortion), Burrows Delta, function-word Delta, review-voice distance, and Lingua language detection
+- General Impostors verification against outside same-field authors from the citation network, giving a reproducible reference for the “No listed candidate” alternative
 - Multi-pass review with targeted follow-up rounds when finalists remain close
 - Explicit “No listed candidate” probability and same-name identity questions
 - Minimal and detailed interface modes, animated progress, stable clue display, and completed-run duration
@@ -35,7 +36,7 @@ The analysis pipeline separates observable evidence from final scoring:
 2. Resolve the underlying manuscript, verify its author identities, and remove any confirmed manuscript author from the referee pool. Name or initial collisions remain eligible until source-backed ORCID, author ID, official profile, affiliation, field, and publication evidence distinguishes the person from a namesake. Automatic exclusion requires two distinct public sources: normally an authoritative manuscript byline and a separate identity source. A single page never triggers exclusion.
 3. Trace a year-bounded citation graph. Direct citations are stronger candidate priors than second-order citations; neither is writing evidence.
 4. Collect known private samples and exact-name solo-author public works when available.
-5. Run deterministic overlap, stylometry, report-voice, and surface-language checks.
+5. Run deterministic overlap, stylometry (including a topic-masked expertise-ablation view), General Impostors, report-voice, and surface-language checks.
 6. Ask independent model passes to evaluate direct writing evidence separately from academic and network proximity.
 7. Run focused expertise-ablation and counter-evidence rounds for close finalists.
 8. Adjudicate the evidence, preserve a “none of the above” alternative, and render concise and detailed reports.
@@ -108,6 +109,7 @@ Copy `.env.example` to a local `.env` file (loaded automatically by the launcher
 | `AUTHOR_ATTRIBUTION_PUBLIC_CORPUS` | `true` | Enable exact-name solo-work collection from arXiv. |
 | `AUTHOR_ATTRIBUTION_PUBLIC_FULL_TEXTS` | `8` | Distributed pre-2026/chronological solo-paper excerpts per candidate; capped at 8 to preserve room for careful comparison. |
 | `AUTHOR_ATTRIBUTION_CITATION_NETWORK` | `true` | Enable the time-truncated Semantic Scholar citation prior. |
+| `AUTHOR_ATTRIBUTION_IMPOSTOR_AUTHORS` | `4` | Outside citation-network authors (0–8) whose exact-name solo arXiv works serve as General Impostors. `0` disables them; they are never collected when exploration beyond the candidate list is off. |
 | `AUTHOR_ATTRIBUTION_PARALLEL_PREFETCH` | `true` | Start the candidate-independent feature-ledger model call while citation tracing, identity checks, and corpus collection run, so two model calls may briefly overlap. Set `false` to keep every model call sequential. The ledger is computed once per run either way and shared by discovery and attribution. |
 | `SEMANTIC_SCHOLAR_API_KEY` | unset | Optional; the public API normally works without a key. |
 | `AUTHOR_ATTRIBUTION_CITATION_CACHE` | system cache | Optional citation-metadata cache directory. |
@@ -122,6 +124,7 @@ Model names must be available to the signed-in account or configured API project
 - Private candidate corpora are sent to the selected model for that run, but are not used as public-search queries or shown as public citations.
 - Public author cards are saved only in that browser's local storage.
 - Public arXiv excerpts may be cached locally to make later runs more reliable and efficient.
+- When exploration beyond the candidate list is on, the names of up to four outside same-field authors from the public citation network are used as arXiv queries to build the impostor corpus. No private text is sent.
 - Public citation metadata may be cached locally. Only the public manuscript identifier or title is sent to Semantic Scholar; the private referee-report text is not.
 - When public-source search finds zbMATH Open or MathSciNet reviews, they are treated as secondary, genre-shifted comparison prose. Subscription-only MathSciNet review text is never written to public output or the repository.
 - OpenAI API requests set `store=False` where supported.

@@ -1435,6 +1435,20 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(identity["status"], "unable_to_determine")
 
 
+def _author_text(seed: int):
+    """A synthetic author with a private vocabulary and punctuation habit."""
+    generator = random.Random(seed)
+    vocabulary = ["".join(generator.choice("abcdefghilmnoprstu") for _ in range(generator.randint(2, 8))) for _ in range(250)]
+    weights = [generator.random() ** 3 for _ in vocabulary]
+    punctuation = generator.choice([", ", "; ", " - ", ": "])
+
+    def write(words: int) -> str:
+        chosen = generator.choices(vocabulary, weights, k=words)
+        return " ".join(word + (punctuation if index % 9 == 0 else "") for index, word in enumerate(chosen))
+
+    return write
+
+
 class _FakePage:
     def __init__(self, text: str | None) -> None:
         self.text = text
@@ -1601,6 +1615,96 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual([schema for schema, _, _ in calls], ["author_attribution"] * 2)
         self.assertTrue(all("Repeated 'teh' spelling." in prompt for _, _, prompt in calls))
         self.assertEqual(result["_review_rounds"], 2)
+
+    def test_impostor_names_are_outside_full_names_without_namesakes(self) -> None:
+        citation = {
+            "candidates": [
+                {"display_name": "Alice Author", "listed_candidate": "Alice Author"},
+                {"display_name": "M. Lewicka", "listed_candidate": None},
+                {"display_name": "Robert Author", "listed_candidate": None},
+                {"display_name": "Wentao Cao", "listed_candidate": None},
+                {"display_name": "Wentao  Cao", "listed_candidate": None},
+                {"display_name": "Sebastien Boucksom", "listed_candidate": None},
+                {"display_name": "Charles Favre", "listed_candidate": None},
+            ]
+        }
+        names = app._impostor_author_names(citation, ["Alice Author", "Bob Writer"], {}, 2)
+        # "Robert Author" could be a namesake of a listed alias only by initial, so it stays eligible;
+        # "M. Lewicka" is initials-only and the duplicate spelling is folded away.
+        self.assertEqual(names, ["Robert Author", "Wentao Cao"])
+        self.assertNotIn(
+            "Alan Author", app._impostor_author_names(
+                {"candidates": [{"display_name": "Alan Author", "listed_candidate": None}]},
+                ["Alice Author"], {}, 4,
+            )
+        )
+
+    def test_impostor_corpus_follows_the_candidate_scope_switch(self) -> None:
+        citation = {
+            "available": True,
+            "reason": "",
+            "candidates": [
+                {"display_name": "Outside Expert", "listed_candidate": None},
+                {"display_name": "Second Outsider", "listed_candidate": None},
+            ],
+        }
+        writers = {name: _author_text(seed) for seed, name in enumerate(
+            ["Alice Author", "Bob Writer", "Outside Expert", "Second Outsider"]
+        )}
+
+        def fake_collect(labels, **_kwargs):
+            corpora = {
+                label: [
+                    {
+                        "title": f"{label} {index}",
+                        "text": writers[label](900),
+                        "authors": [label],
+                        "published": "2020-01-01",
+                        "version_used": "v1",
+                        "abstract_url": f"https://arxiv.org/abs/2001.0000{index}v1",
+                    }
+                    for index in range(2)
+                ]
+                for label in labels
+            }
+            return corpora, {"candidates": {}, "errors": []}
+
+        for disabled in (False, True):
+            calls: list[tuple[str, bool | None, str]] = []
+            with self.subTest(disable_outside_candidates=disabled):
+                with (
+                    patch.object(app, "CITATION_NETWORK_ENABLED", True),
+                    patch.object(app, "PUBLIC_CORPUS_ENABLED", True),
+                    patch.object(app, "ANALYSIS_REVIEW_PASSES", 1),
+                    patch.object(app, "ADAPTIVE_MAX_TARGETED_ROUNDS", 0),
+                    patch.object(app, "collect_citation_network", return_value=dict(citation)),
+                    patch.object(app, "collect_arxiv_corpora", side_effect=fake_collect) as collect,
+                    patch.object(app, "_call_model", side_effect=self._fake_model(calls)),
+                ):
+                    document = {
+                        "name": "report.txt",
+                        "text": writers["Alice Author"](700),
+                        "metadata": {},
+                        "format": "text",
+                        "truncated": False,
+                    }
+                    result = asyncio.run(
+                        app._perform_analysis(
+                            "attribution", ["Alice Author", "Bob Writer"], [document], "", {},
+                            {"disable_outside_candidates": disabled}, "gpt-test", "high", {},
+                        )
+                    )
+                impostors = result["deterministic_impostors"]
+                self.assertTrue(impostors["available"])
+                if disabled:
+                    self.assertEqual(collect.call_count, 1)
+                    self.assertEqual(impostors["external_impostor_authors"], [])
+                    self.assertIn("Outside-candidate exploration is off", impostors["impostor_collection_note"])
+                else:
+                    self.assertEqual(collect.call_args_list[1].args[0], ["Outside Expert", "Second Outsider"])
+                    self.assertEqual(impostors["external_impostor_authors"], ["Outside Expert", "Second Outsider"])
+                    self.assertEqual(impostors["leader"], "Alice Author")
+                self.assertTrue(any("General Impostors" in prompt for _, _, prompt in calls))
 
     def test_profile_cosine_matches_the_direct_formula(self) -> None:
         generator = random.Random(5)
