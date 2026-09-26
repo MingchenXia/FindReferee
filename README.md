@@ -171,6 +171,16 @@ Run the tests with:
 .venv/bin/python -m unittest discover -s tests
 ```
 
+`benchmark.py` runs the private labeled cases in the ignored `benchmarks/` folder. Each case folder holds a `case.json` with the target, candidates, optional manuscript, context, and private reference files, plus an `expected_author` that only the scorer reads:
+
+```bash
+.venv/bin/python benchmark.py run --repeat 3            # save each result under <case>/runs/
+.venv/bin/python benchmark.py score --runs all           # per-case scores, aggregates, and run-to-run stability
+.venv/bin/python benchmark.py fit-calibration --output calibration.json
+```
+
+`benchmark.py --help` documents the case format. Point `AUTHOR_ATTRIBUTION_CALIBRATION_FILE` at the fitted file once it covers at least 20 labeled cases.
+
 `evaluation_metrics.py` provides blind-test unique Top-1 accuracy, a separate Top-1-including-ties rate, tie rate, MRR, true-author margin, log loss, Brier score, entropy, decisive accuracy, and repeated-run Jensen-Shannon stability. A label tied at the highest probability is not counted as a unique Top-1 win. Keep private reports, expected labels, and run artifacts under the ignored `benchmarks/` directory so ground truth is never sent to the model or committed accidentally.
 
 The project deliberately builds on maintained, general-purpose components rather than low-usage end-to-end attribution repositories: RapidFuzz supplies reproducible string matching, Lingua identifies the written language, and pyspellchecker supplies a compact MIT-licensed English lexicon for the lexical error-fingerprint check. LanguageTool, spaCy, and neural embedding stacks were evaluated but are not required because they add large downloads, privacy-sensitive services, or topic leakage without a validated gain on the private benchmark.
