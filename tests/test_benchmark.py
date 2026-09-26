@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import tempfile
 import types
 import unittest
@@ -193,6 +194,9 @@ class BenchmarkTests(unittest.TestCase):
                 code = benchmark.main(["--root", str(self.root), "check", "--model", "gpt-test"])
             return code, output.getvalue()
 
+        codex_found = patch.object(app, "_codex_command", return_value=["codex"])
+        codex_found.start()
+        self.addCleanup(codex_found.stop)
         with patch.object(app, "_call_model", return_value={"reply": "OK", "_provider": "codex", "_model": "gpt-test"}) as call:
             self.assertEqual(check()[0], 0)
         self.assertEqual(call.call_args.args[5], "low")
@@ -227,6 +231,32 @@ class BenchmarkTests(unittest.TestCase):
             self._main("run", "--label", "v1", "--cases", "alpha")
         saved = json.loads(next((self.root / "alpha" / "runs").glob("*.json")).read_text(encoding="utf-8"))
         self.assertEqual(saved["review_strategy"], "safe timeout fallback")
+
+    def test_missing_codex_is_reported_with_install_steps_before_any_call(self) -> None:
+        output = io.StringIO()
+        with (
+            patch.object(app, "_codex_command", return_value=None),
+            patch.dict(os.environ, {"OPENAI_API_KEY": ""}),
+            patch.object(app, "_call_model") as call,
+            contextlib.redirect_stdout(output),
+        ):
+            code = benchmark.main(["--root", str(self.root), "check", "--skip-cases"])
+        self.assertEqual(code, 1)
+        self.assertIn("curl -fsSL https://chatgpt.com/codex/install.sh | sh", output.getvalue())
+        self.assertIn("codex login", output.getvalue())
+        call.assert_not_called()
+
+    def test_codex_from_the_official_installer_is_found_without_path_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            binary = Path(home) / ".local" / "bin" / "codex"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("", encoding="utf-8")
+            with (
+                patch.dict(os.environ, {"HOME": home, "CODEX_CLI_PATH": ""}),
+                patch.object(app.shutil, "which", return_value=None),
+                patch.object(app.Path, "is_file", lambda path: str(path) == str(binary)),
+            ):
+                self.assertEqual(app._codex_command(), [str(binary)])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1833,6 +1833,8 @@ def _codex_command() -> list[str] | None:
 
     common_paths = (
         "/Applications/ChatGPT.app/Contents/Resources/codex",
+        # The official installer's default, found even before a new shell picks up PATH.
+        str(Path.home() / ".local" / "bin" / "codex"),
         "/usr/local/bin/codex",
         "/opt/homebrew/bin/codex",
     )

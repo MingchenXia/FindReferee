@@ -60,7 +60,11 @@ fi
 mkdir -p benchmarks
 
 echo
-echo "Step 1 of 4: test cases"
+echo "Step 1 of 5: checking Codex and your ChatGPT sign-in"
+.venv/bin/python benchmark.py check --skip-cases --model "$MODEL" || finish 1
+
+echo
+echo "Step 2 of 5: test cases"
 if [[ -d "$REPORTS_DIR" ]]; then
   .venv/bin/python benchmark.py setup --from "$REPORTS_DIR" || finish 1
 fi
@@ -71,11 +75,11 @@ if (( ${#cases} == 0 )); then
 fi
 
 echo
-echo "Step 2 of 4: checking the cases and the Codex sign-in"
-.venv/bin/python benchmark.py check --model "$MODEL" || finish 1
+echo "Step 3 of 5: checking the cases"
+.venv/bin/python benchmark.py check --skip-model || finish 1
 
 echo
-echo "Step 3 of 4: preparing the earlier version ($BASELINE)"
+echo "Step 4 of 5: preparing the earlier version ($BASELINE)"
 if [[ ! -f "$BASELINE_DIR/app.py" ]]; then
   git worktree prune
   git worktree add --detach "$BASELINE_DIR" "$BASELINE" >/dev/null || finish 1
@@ -85,7 +89,7 @@ EARLIER="baseline-$BASELINE"
 
 RUNS=$(( ${#cases} * REPEAT * 2 ))
 echo
-echo "Step 4 of 4: up to $RUNS analyses with $MODEL at $EFFORT, roughly $(( RUNS * 26 / 60 ))–$(( (RUNS * 43 + 59) / 60 )) hours."
+echo "Step 5 of 5: up to $RUNS analyses with $MODEL at $EFFORT, roughly $(( RUNS * 26 / 60 ))–$(( (RUNS * 43 + 59) / 60 )) hours."
 echo "Keep the Mac plugged in; it stays awake while this runs. Closing this window stops the"
 echo "benchmark, and double-clicking this file again continues from the last finished run."
 read -r "?Press Return to start." || true

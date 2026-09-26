@@ -39,6 +39,7 @@ import asyncio
 import importlib
 import io
 import json
+import os
 import re
 import shlex
 import shutil
@@ -93,6 +94,12 @@ KNOWN_CASES: tuple[tuple[re.Pattern[str], dict[str, Any]], ...] = (
         "context": "arXiv:2504.21300",
     }),
 )
+CODEX_INSTALL_HELP = """Codex was not found on this Mac. Install it once in Terminal:
+
+    curl -fsSL https://chatgpt.com/codex/install.sh | sh
+
+Then open a new Terminal window, run `codex login`, and sign in with your ChatGPT account.
+(Homebrew users can instead run `brew install --cask codex`.)"""
 CHECK_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -616,6 +623,8 @@ def command_setup(args: argparse.Namespace) -> int:
 
 def command_check(args: argparse.Namespace) -> int:
     model = args.model or app.CODEX_MODEL
+    if args.skip_cases:
+        return _check_model(model)
     problems = []
     print("Checking the benchmark cases:")
     for folder in _cases(args.root, args.cases):
@@ -641,7 +650,15 @@ def command_check(args: argparse.Namespace) -> int:
     if problems:
         print("\nFix these before running:\n  " + "\n  ".join(problems))
         return 1
-    print(f"\nChecking that {model} answers through the signed-in account…")
+    return 0 if args.skip_model else _check_model(model)
+
+
+def _check_model(model: str) -> int:
+    """Confirm with one small request that the signed-in account can use the model."""
+    if app._codex_command() is None and not os.getenv("OPENAI_API_KEY"):
+        print(CODEX_INSTALL_HELP)
+        return 1
+    print(f"Checking that {model} answers through the signed-in account…")
     try:
         reply = app._call_model(
             "Reply with the word OK.",
@@ -712,6 +729,8 @@ def main(argv: list[str] | None = None) -> int:
     check = commands.add_parser("check", help="Validate every case and make one small model call.")
     check.add_argument("--cases", nargs="*")
     check.add_argument("--model", help="Model to check (default: the app's CODEX_MODEL).")
+    check.add_argument("--skip-cases", action="store_true", help="Only check the model sign-in.")
+    check.add_argument("--skip-model", action="store_true", help="Only check the cases.")
     check.set_defaults(handler=command_check)
 
     for name, handler, help_text in (
