@@ -153,5 +153,80 @@ class BenchmarkTests(unittest.TestCase):
                 benchmark._load_app(Path(other))
         self.assertIs(benchmark._load_app(Path(app.__file__).parent), app)
 
+    def test_setup_wizard_builds_cases_with_validation_presets(self) -> None:
+        reports = self.root / "reports"
+        reports.mkdir()
+        (reports / "Orbifold referee report.txt").write_text("Report text. " * 50, encoding="utf-8")
+        (reports / "notes.txt").write_text("Not a report.", encoding="utf-8")
+        (reports / "manuscript draft.txt").write_text("Manuscript text. " * 50, encoding="utf-8")
+        target_root = self.root / "cases"
+        answers = iter([
+            "", "", "", "Nobody", "", "", "arXiv:2101.00001", f"'{reports / 'manuscript draft.txt'}'", "Some Author",
+            "n",  # manuscript draft.txt is not a report
+            "n",  # notes.txt is not a report
+        ])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(benchmark.main(["--root", str(target_root), "setup", "--from", str(reports)]), 0)
+        case = json.loads((target_root / "orbifold" / "case.json").read_text(encoding="utf-8"))
+        self.assertEqual(case["candidates"], ["Ya Deng", "Charles Favre", "Mingchen Xia"])
+        self.assertEqual(case["expected_author"], "Ya Deng")
+        self.assertEqual(case["label_status"], "confirmed")
+        self.assertEqual(case["context"], "arXiv:2101.00001")
+        self.assertEqual(case["underlying_authors"], ["Some Author"])
+        self.assertTrue((target_root / "orbifold" / "report.txt").is_file())
+        self.assertTrue((target_root / "orbifold" / "manuscript.txt").is_file())
+        # Running setup again skips the case that already exists.
+        answers = iter(["n", "n"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)), contextlib.redirect_stdout(io.StringIO()) as output:
+            benchmark.main(["--root", str(target_root), "setup", "--from", str(reports)])
+        self.assertIn("already set up as 'orbifold'", output.getvalue())
+
+    def test_dragged_paths_are_unescaped(self) -> None:
+        self.assertEqual(benchmark._dropped_path("/Users/me/Test\\ reports/ms.pdf "), Path("/Users/me/Test reports/ms.pdf"))
+        self.assertEqual(benchmark._dropped_path("'/Users/me/Test reports/ms.pdf'"), Path("/Users/me/Test reports/ms.pdf"))
+        self.assertIsNone(benchmark._dropped_path("  "))
+
+    def test_check_validates_cases_before_calling_the_model(self) -> None:
+        def check() -> tuple[int, str]:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = benchmark.main(["--root", str(self.root), "check", "--model", "gpt-test"])
+            return code, output.getvalue()
+
+        with patch.object(app, "_call_model", return_value={"reply": "OK", "_provider": "codex", "_model": "gpt-test"}) as call:
+            self.assertEqual(check()[0], 0)
+        self.assertEqual(call.call_args.args[5], "low")
+        with patch.object(app, "_call_model", side_effect=app.HTTPException(status_code=502, detail="Not signed in")):
+            code, text = check()
+        self.assertEqual(code, 1)
+        self.assertIn("Not signed in", text)
+        case = json.loads((self.root / "beta" / "case.json").read_text(encoding="utf-8"))
+        (self.root / "beta" / "case.json").write_text(json.dumps({**case, "expected_author": "Nobody"}), encoding="utf-8")
+        with patch.object(app, "_call_model") as call:
+            code, text = check()
+        self.assertEqual(code, 1)
+        self.assertIn("'Nobody' is not one of the candidates", text)
+        call.assert_not_called()
+
+    def test_resume_skips_finished_runs(self) -> None:
+        with patch.object(app, "_perform_analysis", new=AsyncMock(return_value=dict(RESULT))) as analysis:
+            self._main("run", "--repeat", "2", "--resume", "--label", "v1", "--cases", "alpha")
+            self._main("run", "--repeat", "2", "--resume", "--label", "v1", "--cases", "alpha")
+            self._main("run", "--repeat", "3", "--resume", "--label", "v1", "--cases", "alpha")
+        self.assertEqual(analysis.await_count, 3)
+        self.assertEqual(len(list((self.root / "alpha" / "runs").glob("*.json"))), 3)
+
+    def test_provider_failure_stops_the_batch_without_saving_a_run(self) -> None:
+        failure = app.HTTPException(status_code=502, detail="No active ChatGPT/Codex subscription was detected.")
+        with patch.object(app, "_perform_analysis", new=AsyncMock(side_effect=failure)):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(benchmark.main(["--root", str(self.root), "run", "--label", "v1"]), 2)
+        self.assertFalse(list(self.root.glob("*/runs/*.json")))
+        timeout = app.HTTPException(status_code=502, detail="The analysis time budget was exhausted.")
+        with patch.object(app, "_perform_analysis", new=AsyncMock(side_effect=timeout)):
+            self._main("run", "--label", "v1", "--cases", "alpha")
+        saved = json.loads(next((self.root / "alpha" / "runs").glob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(saved["review_strategy"], "safe timeout fallback")
+
 if __name__ == "__main__":
     unittest.main()

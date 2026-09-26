@@ -24,7 +24,9 @@ of the app version that produced it), so two versions can be compared on the
 same cases. --app-dir runs another checkout's app.py, for example an older
 revision checked out with `git worktree add`.
 
-    python benchmark.py run [--cases NAME ...] [--repeat N] [--label L] [--app-dir DIR] [--model M] [--effort E]
+    python benchmark.py setup --from "~/Downloads/Test reports"
+    python benchmark.py check [--model M]
+    python benchmark.py run [--cases NAME ...] [--repeat N] [--resume] [--label L] [--app-dir DIR] [--model M] [--effort E]
     python benchmark.py score [--label L] [--runs latest|all] [--confirmed-only] [--json]
     python benchmark.py compare --baseline L1 --candidate L2 [--confirmed-only] [--json]
     python benchmark.py fit-calibration --output calibration.json [--label L] [--confirmed-only]
@@ -37,6 +39,9 @@ import asyncio
 import importlib
 import io
 import json
+import re
+import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -59,6 +64,45 @@ DEFAULT_ROOT = HERE / "benchmarks"
 LABEL_FIELDS = {"expected_author", "label_status"}
 FALLBACK_STRATEGY = "safe timeout fallback"
 UNLABELED = "unlabeled"
+# Suggestions for the four VALIDATION.md cases, matched against report file names.
+# The setup wizard shows each one as a default that can be accepted or replaced.
+KNOWN_CASES: tuple[tuple[re.Pattern[str], dict[str, Any]], ...] = (
+    (re.compile(r"orbifold", re.I), {
+        "name": "orbifold",
+        "candidates": ["Ya Deng", "Charles Favre", "Mingchen Xia"],
+        "expected_author": "Ya Deng",
+        "label_status": "confirmed",
+    }),
+    (re.compile(r"meng|zhou", re.I), {
+        "name": "meng-zhou",
+        "candidates": ["Mingchen Xia", "Valentino Tosatti"],
+        "expected_author": "Mingchen Xia",
+        "label_status": "confirmed",
+    }),
+    (re.compile(r"lnm|lecture", re.I), {
+        "name": "lnm-xia",
+        "candidates": ["Charles Favre", "Sébastien Boucksom", "Mingchen Xia"],
+        "expected_author": "Charles Favre",
+        "label_status": "confirmed",
+    }),
+    (re.compile(r"lewicka|decomposition", re.I), {
+        "name": "su-lewicka",
+        "candidates": ["Marta Lewicka", "László Székelyhidi Jr.", "Mohammad Reza Pakzad"],
+        "expected_author": "Marta Lewicka",
+        "label_status": "belief",
+        "context": "arXiv:2504.21300",
+    }),
+)
+CHECK_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {"reply": {"type": "string"}},
+    "required": ["reply"],
+}
+
+
+class ProviderFailure(Exception):
+    """A model call failed for a reason other than the analysis time budget."""
 # The app module under test: this checkout's app.py unless --app-dir names another.
 app: Any = None
 
@@ -195,7 +239,11 @@ def _run_case(folder: Path, inputs: dict[str, Any]) -> dict[str, Any]:
                 inputs["declared_underlying_authors"],
             )
         )
-    except Exception as exc:  # Keep the run on record exactly as the web app would.
+    except Exception as exc:
+        # A login, quota, or connection failure says nothing about the version under test.
+        if not getattr(app, "_is_time_budget_error", lambda _error: False)(exc):
+            raise ProviderFailure(str(getattr(exc, "detail", exc))) from exc
+        # A time-budget fallback is a genuine outcome of the version, so it is kept on record.
         result = app._analysis_fallback_result(
             inputs["mode"],
             inputs["candidate_list"],
@@ -222,8 +270,24 @@ def command_run(args: argparse.Namespace) -> int:
             raise SystemExit(f"{folder.name}: {exc.detail}") from exc
         runs = folder / "runs"
         runs.mkdir(exist_ok=True)
-        for repetition in range(args.repeat):
-            result = _run_case(folder, inputs)
+        finished = (
+            sum(1 for path in runs.glob("*.json") if _label_of(json.loads(path.read_text(encoding="utf-8"))) == label)
+            if args.resume
+            else 0
+        )
+        if finished >= args.repeat:
+            print(f"[{folder.name}] {finished} run(s) labeled {label!r} already saved; skipped", file=sys.stderr)
+            continue
+        for repetition in range(finished, args.repeat):
+            try:
+                result = _run_case(folder, inputs)
+            except ProviderFailure as exc:
+                print(
+                    f"\n[{folder.name}] The model provider failed: {exc}\n"
+                    "Finished runs are kept. Fix the problem, then run again with --resume to continue.",
+                    file=sys.stderr,
+                )
+                return 2
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             result["_benchmark"] = {
                 "label": label,
@@ -451,6 +515,149 @@ def command_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ask(prompt: str, default: str = "") -> str:
+    try:
+        answer = input(f"  {prompt}{f' [{default}]' if default else ''}: ").strip()
+    except EOFError as exc:
+        raise SystemExit("\nSetup needs answers from the keyboard; run it in a Terminal window.") from exc
+    return answer or default
+
+
+def _split_names(value: str) -> list[str]:
+    return [name.strip() for name in value.split(";") if name.strip()]
+
+
+def _dropped_path(value: str) -> Path | None:
+    """Read a path typed or dragged into Terminal, which may be quoted or backslash-escaped."""
+    if not value.strip():
+        return None
+    try:
+        parts = shlex.split(value)
+    except ValueError:
+        parts = [value.strip()]
+    return Path(parts[0]).expanduser() if parts else None
+
+
+def command_setup(args: argparse.Namespace) -> int:
+    source = args.source.expanduser()
+    if not source.is_dir():
+        raise SystemExit(f"{source} is not a folder.")
+    reports = sorted(
+        path for path in source.iterdir() if path.is_file() and path.suffix.lower() in app.SUPPORTED_EXTENSIONS
+    )
+    if not reports:
+        raise SystemExit(f"No PDF, TXT, Markdown, or TeX reports were found in {source}.")
+    args.root.mkdir(parents=True, exist_ok=True)
+    existing = {
+        str(case.get("source_file")): folder.name
+        for folder in sorted(path.parent for path in args.root.glob("*/case.json"))
+        for case in [_read_case(folder)]
+    }
+    print(f"Setting up benchmark cases from {source}. Press Return to accept a suggestion in brackets.")
+    for report in reports:
+        if report.name in existing:
+            print(f"\n{report.name}: already set up as {existing[report.name]!r}.")
+            continue
+        preset = next((values for pattern, values in KNOWN_CASES if pattern.search(report.stem)), {})
+        print(f"\n{report.name}" + ("  (matches a case in VALIDATION.md)" if preset else ""))
+        if _ask("Include this report as a test case? (y/n)", "y").lower().startswith("n"):
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "-", report.stem.casefold()).strip("-") or "case"
+        while True:
+            name = _ask("Case name", preset.get("name", slug))
+            if not (args.root / name).exists():
+                break
+            print(f"  A case named {name!r} already exists; choose another name.")
+        print("  List every candidate you want compared, including the true author.")
+        while True:
+            candidates = _split_names(_ask('Candidates, separated by ";"', "; ".join(preset.get("candidates", []))))
+            if len(candidates) != 1:
+                break
+            print("  Enter at least two candidates, or none to let the app discover them.")
+        while True:
+            expected = _ask("True author (never shown to the analysis)", preset.get("expected_author", candidates[0] if candidates else ""))
+            if expected and (not candidates or expected in candidates):
+                break
+            print("  The true author must be one of the candidates, spelled exactly the same.")
+        while True:
+            status = _ask("Is that label confirmed or only a belief? (confirmed/belief)", preset.get("label_status", "confirmed")).lower()
+            if status in {"confirmed", "belief"}:
+                break
+        context = _ask("arXiv ID or DOI of the manuscript under review, or other context", preset.get("context", ""))
+        manuscript = None
+        while True:
+            manuscript = _dropped_path(_ask("Manuscript file under review (drag it here, or press Return to skip)"))
+            if manuscript is None or (manuscript.is_file() and manuscript.suffix.lower() in app.SUPPORTED_EXTENSIONS):
+                break
+            print("  That is not a readable PDF, TXT, Markdown, or TeX file.")
+        manuscript_authors = _split_names(_ask('Manuscript authors, separated by ";" (optional)'))
+
+        folder = args.root / name
+        folder.mkdir(parents=True)
+        shutil.copy2(report, folder / f"report{report.suffix.lower()}")
+        case: dict[str, Any] = {
+            "source_file": report.name,
+            "target": f"report{report.suffix.lower()}",
+            "candidates": candidates,
+            "context": context,
+            "expected_author": expected,
+            "label_status": status,
+        }
+        if manuscript:
+            shutil.copy2(manuscript, folder / f"manuscript{manuscript.suffix.lower()}")
+            case["underlying"] = f"manuscript{manuscript.suffix.lower()}"
+        if manuscript_authors:
+            case["underlying_authors"] = manuscript_authors
+        (folder / "case.json").write_text(json.dumps(case, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  Saved {folder / 'case.json'}")
+    return 0
+
+
+def command_check(args: argparse.Namespace) -> int:
+    model = args.model or app.CODEX_MODEL
+    problems = []
+    print("Checking the benchmark cases:")
+    for folder in _cases(args.root, args.cases):
+        case = _read_case(folder)
+        try:
+            inputs = _analysis_inputs(folder, case, model, app.CODEX_REASONING_EFFORT)
+        except (app.HTTPException, SystemExit, OSError, ValueError, KeyError) as exc:
+            problems.append(f"{folder.name}: {getattr(exc, 'detail', exc)}")
+            continue
+        expected = str(case.get("expected_author", ""))
+        candidates = inputs["candidate_list"]
+        if not expected or (candidates and expected not in candidates):
+            problems.append(f"{folder.name}: the true author {expected!r} is not one of the candidates.")
+            continue
+        words = len(inputs["documents"][0]["text"].split())
+        print(
+            f"  {folder.name}: {words} words, {len(candidates) or 'automatic'} candidates, "
+            f"true author {expected!r} ({case.get('label_status', 'confirmed')})"
+            + (", with manuscript" if inputs["underlying_document"] else "")
+        )
+        if words < 40:
+            problems.append(f"{folder.name}: only {words} words could be extracted; a scanned PDF needs OCR first.")
+    if problems:
+        print("\nFix these before running:\n  " + "\n  ".join(problems))
+        return 1
+    print(f"\nChecking that {model} answers through the signed-in account…")
+    try:
+        reply = app._call_model(
+            "Reply with the word OK.",
+            "Connectivity check for the FindReferee benchmark.",
+            "benchmark_check",
+            CHECK_SCHEMA,
+            model,
+            "low",
+            enable_search=False,
+        )
+    except Exception as exc:
+        print(f"The model check failed: {getattr(exc, 'detail', exc)}")
+        return 1
+    print(f"  OK: {reply.get('_provider', 'provider')} answered with {reply.get('_model', model)}.")
+    return 0
+
+
 def command_fit_calibration(args: argparse.Namespace) -> int:
     pairs = []
     models = set()
@@ -492,9 +699,19 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--cases", nargs="*")
     run.add_argument("--repeat", type=int, default=1, help="Independent runs per case, for stability.")
     run.add_argument("--label", help="Name for these runs (default: the app checkout's git revision).")
+    run.add_argument("--resume", action="store_true", help="Count runs already saved under this label toward --repeat.")
     run.add_argument("--model", help="Model (default: the app's CODEX_MODEL).")
     run.add_argument("--effort", help="Reasoning strength (default: the app's CODEX_REASONING_EFFORT).")
     run.set_defaults(handler=command_run)
+
+    setup = commands.add_parser("setup", help="Create case folders from a folder of reports, asking for each case's details.")
+    setup.add_argument("--from", dest="source", type=Path, required=True, help="Folder that holds the reports.")
+    setup.set_defaults(handler=command_setup)
+
+    check = commands.add_parser("check", help="Validate every case and make one small model call.")
+    check.add_argument("--cases", nargs="*")
+    check.add_argument("--model", help="Model to check (default: the app's CODEX_MODEL).")
+    check.set_defaults(handler=command_check)
 
     for name, handler, help_text in (
         ("score", command_score, "Score saved runs against the withheld labels."),
