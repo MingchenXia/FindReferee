@@ -181,6 +181,18 @@ Run the tests with:
 
 `benchmark.py --help` documents the case format. Point `AUTHOR_ATTRIBUTION_CALIBRATION_FILE` at the fitted file once it covers at least 20 labeled cases.
 
+To compare two versions on the same cases, check the older revision out beside this one and label each set of runs. Every run records its label, git revision, model, and effort:
+
+```bash
+git worktree add ../FindReferee-baseline 642043c        # any older revision
+caffeinate -i .venv/bin/python benchmark.py run --label after --model gpt-5.6-sol --effort xhigh
+caffeinate -i .venv/bin/python benchmark.py --app-dir ../FindReferee-baseline run --label before --model gpt-5.6-sol --effort xhigh
+.venv/bin/python benchmark.py compare --baseline before --candidate after
+git worktree remove ../FindReferee-baseline
+```
+
+Run the newer version first: public-source caches are then warm for the baseline, so the analysis-time comparison is conservative. `benchmark.py` does not read `.env`; pass the model and effort explicitly, or export the file first (`set -a; source .env; set +a`). Each run takes roughly as long as an analysis in the app. With `--repeat 3` or more, `compare` marks per-case changes that fall inside a version's own run-to-run spread.
+
 `evaluation_metrics.py` provides blind-test unique Top-1 accuracy, a separate Top-1-including-ties rate, tie rate, MRR, true-author margin, log loss, Brier score, entropy, decisive accuracy, and repeated-run Jensen-Shannon stability. A label tied at the highest probability is not counted as a unique Top-1 win. Keep private reports, expected labels, and run artifacts under the ignored `benchmarks/` directory so ground truth is never sent to the model or committed accidentally.
 
 The project deliberately builds on maintained, general-purpose components rather than low-usage end-to-end attribution repositories: RapidFuzz supplies reproducible string matching, Lingua identifies the written language, and pyspellchecker supplies a compact MIT-licensed English lexicon for the lexical error-fingerprint check. LanguageTool, spaCy, and neural embedding stacks were evaluated but are not required because they add large downloads, privacy-sensitive services, or topic leakage without a validated gain on the private benchmark.

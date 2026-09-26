@@ -342,6 +342,10 @@ COMPARISON_METRICS = (
 )
 
 
+# Changes smaller than the displayed precision count as "same".
+DISPLAY_TOLERANCE = {"percent": 0.0005, "points": 0.0005, "decimal": 0.0005, "fine": 0.00005, "minutes": 0.05}
+
+
 def _format(value: float | None, style: str, *, signed: bool = False) -> str:
     if value is None:
         return "n/a"
@@ -371,7 +375,7 @@ def command_compare(args: argparse.Namespace) -> int:
     for key, name, higher_is_better, style in COMPARISON_METRICS:
         old, new = before["aggregate"].get(key), after["aggregate"].get(key)
         change = None if old is None or new is None else new - old
-        verdict = "n/a" if change is None else "same" if abs(change) < 1e-9 else "neutral" if higher_is_better is None else (
+        verdict = "n/a" if change is None else "same" if abs(change) < DISPLAY_TOLERANCE[style] else "neutral" if higher_is_better is None else (
             "better" if (change > 0) == higher_is_better else "worse"
         )
         metrics.append({"metric": name, "key": key, "baseline": old, "candidate": new, "change": change, "verdict": verdict, "style": style})
