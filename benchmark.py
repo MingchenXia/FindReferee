@@ -254,7 +254,7 @@ def command_fit_calibration(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run, score, and calibrate FindReferee on private labeled cases.")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Folder that contains the case folders.")
     commands = parser.add_subparsers(dest="command", required=True)
 
