@@ -35,8 +35,8 @@ VIEW_FAMILIES: dict[str, tuple[str, ...]] = {
         "character_ngram_best_three_mean",
         "length_matched_character_median",
     ),
-    "most_frequent_words": ("burrows_delta",),
-    "function_words": ("function_word_delta",),
+    "most_frequent_words": ("cosine_delta", "burrows_delta"),
+    "function_words": ("function_word_cosine_delta", "function_word_delta"),
 }
 
 
@@ -182,46 +182,44 @@ def _most_frequent_words(samples: list[tuple[str, Counter[str]]], feature_count:
     return [word for word, _ in aggregate.most_common(feature_count)]
 
 
-def _burrows_from_frequencies(
+def _cosine_distance(left: list[float], right: list[float]) -> float:
+    numerator = sum(a * b for a, b in zip(left, right))
+    norms = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    return 1.0 - numerator / norms if norms else 1.0
+
+
+def _cosine_delta_from_frequencies(
     target_frequencies: Counter[str],
     samples: list[tuple[str, Counter[str]]],
     features: list[str],
 ) -> dict[str, float]:
-    """Burrows-style Delta over precomputed relative word frequencies."""
+    """Cosine Delta (Smith & Aldridge 2011) over precomputed relative word frequencies.
+
+    Frequencies are z-scored against the pooled comparison works, as in Burrows's
+    Delta, but the target and each candidate centroid are compared by the angle
+    between their z-profiles instead of the mean absolute difference. The angle
+    ignores how extreme a profile is overall and has been more robust across
+    corpora and feature counts (Evert et al. 2017). 0 is identical, lower is closer.
+    """
     if not samples:
         return {}
-    means = {word: sum(freq[word] for _, freq in samples) / len(samples) for word in features}
-    deviations: dict[str, float] = {}
-    for word in features:
-        variance = sum((freq[word] - means[word]) ** 2 for _, freq in samples) / len(samples)
-        deviations[word] = math.sqrt(variance) or 1.0
-    target_z = {word: (target_frequencies[word] - means[word]) / deviations[word] for word in features}
-    grouped: dict[str, list[Counter[str]]] = {}
+    means = [sum(freq[word] for _, freq in samples) / len(samples) for word in features]
+    deviations = [
+        math.sqrt(sum((freq[word] - mean) ** 2 for _, freq in samples) / len(samples)) or 1.0
+        for word, mean in zip(features, means)
+    ]
+
+    def z_profile(frequencies: Counter[str]) -> list[float]:
+        return [(frequencies[word] - mean) / deviation for word, mean, deviation in zip(features, means, deviations)]
+
+    target_z = z_profile(target_frequencies)
+    grouped: dict[str, list[list[float]]] = {}
     for label, frequencies in samples:
-        grouped.setdefault(label, []).append(frequencies)
-    distances: dict[str, float] = {}
-    for candidate, candidate_samples in grouped.items():
-        centroid = {
-            word: sum((freq[word] - means[word]) / deviations[word] for freq in candidate_samples)
-            / len(candidate_samples)
-            for word in features
-        }
-        distances[candidate] = sum(abs(target_z[word] - centroid[word]) for word in features) / len(features)
-    return distances
-
-
-def _burrows_distances(
-    target: str,
-    texts: dict[str, list[str]],
-    *,
-    feature_count: int = 160,
-    fixed_features: list[str] | None = None,
-) -> dict[str, float]:
-    samples = [(candidate, _word_frequencies(text)) for candidate, values in texts.items() for text in values]
-    if not samples:
-        return {}
-    features = fixed_features or _most_frequent_words(samples, feature_count)
-    return _burrows_from_frequencies(_word_frequencies(target), samples, features)
+        grouped.setdefault(label, []).append(z_profile(frequencies))
+    return {
+        candidate: _cosine_distance(target_z, [sum(values) / len(profiles) for values in zip(*profiles)])
+        for candidate, profiles in grouped.items()
+    }
 
 
 def build_stylometry_diagnostics(
@@ -249,10 +247,10 @@ def build_stylometry_diagnostics(
     sample_frequencies = [
         (candidate, _word_frequencies(text)) for candidate, values in texts.items() for text in values
     ]
-    burrows = _burrows_from_frequencies(
+    cosine_delta = _cosine_delta_from_frequencies(
         target_frequencies, sample_frequencies, _most_frequent_words(sample_frequencies, 160)
     )
-    function_delta = _burrows_from_frequencies(target_frequencies, sample_frequencies, FUNCTION_WORDS)
+    function_delta = _cosine_delta_from_frequencies(target_frequencies, sample_frequencies, FUNCTION_WORDS)
     length_matched = (
         _length_matched_character_scores(target_text, texts, word_count, target_profiles[4])
         if word_count < 200
@@ -286,8 +284,8 @@ def build_stylometry_diagnostics(
             "topic_masked_character_best_three_mean": round(
                 sum(masked_scores[:3]) / min(3, len(masked_scores)), 4
             ),
-            "burrows_delta": round(burrows[candidate], 4),
-            "function_word_delta": round(function_delta[candidate], 4),
+            "cosine_delta": round(cosine_delta[candidate], 4),
+            "function_word_cosine_delta": round(function_delta[candidate], 4),
             "closest_samples": paper_scores[:3],
         }
         if candidate in length_matched:
@@ -295,8 +293,8 @@ def build_stylometry_diagnostics(
     metric_specs = {
         "character_ngram_best_three_mean": True,
         "topic_masked_character_best_three_mean": True,
-        "burrows_delta": False,
-        "function_word_delta": False,
+        "cosine_delta": False,
+        "function_word_cosine_delta": False,
     }
     if length_matched:
         metric_specs["length_matched_character_median"] = True
@@ -345,8 +343,11 @@ def build_stylometry_diagnostics(
                 "punctuation, function-word order, and word-length rhythm while removing subject vocabulary, so it is "
                 "a deterministic expertise-ablation check. It belongs to the same character family as the raw view."
             ),
-            "burrows_delta": "Mean absolute standardized distance over the 160 most frequent corpus words; lower is closer.",
-            "function_word_delta": "Burrows-style distance restricted to an English function-word list; lower is closer.",
+            "cosine_delta": (
+                "Cosine Delta (Smith & Aldridge 2011): cosine distance between z-scored frequency profiles of the "
+                "160 most frequent corpus words, target versus each candidate centroid; 0 is identical, lower is closer."
+            ),
+            "function_word_cosine_delta": "Cosine Delta restricted to an English function-word list; lower is closer.",
             **(
                 {
                     "length_matched_character": (

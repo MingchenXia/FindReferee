@@ -455,8 +455,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(set(diagnostics["metric_leaders"]), {
             "character_ngram_best_three_mean",
             "topic_masked_character_best_three_mean",
-            "burrows_delta",
-            "function_word_delta",
+            "cosine_delta",
+            "function_word_cosine_delta",
         })
         self.assertEqual(
             set(diagnostics["view_family_leaders"]), {"character", "most_frequent_words", "function_words"}
@@ -485,12 +485,23 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(diagnostics["topic_ablation"]["agrees"])
         self.assertEqual(diagnostics["view_family_leaders"]["character"], "B")
 
+    def test_cosine_delta_compares_profile_direction_not_magnitude(self) -> None:
+        self.assertAlmostEqual(stylometry._cosine_distance([1.0, -2.0, 0.5], [2.0, -4.0, 1.0]), 0.0)
+        self.assertAlmostEqual(stylometry._cosine_distance([1.0, 0.0], [0.0, 3.0]), 1.0)
+        self.assertAlmostEqual(stylometry._cosine_distance([1.0, 2.0], [-1.0, -2.0]), 2.0)
+        self.assertEqual(stylometry._cosine_distance([0.0, 0.0], [1.0, 2.0]), 1.0)
+        # Older stored reports keep their Manhattan Delta keys readable.
+        self.assertEqual(
+            stylometry.view_family_leaders({"burrows_delta": "X", "function_word_delta": "Y"}),
+            {"most_frequent_words": "X", "function_words": "Y"},
+        )
+
     def test_correlated_character_views_cast_a_single_vote(self) -> None:
         leaders = {
             "character_ngram_best_three_mean": "A",
             "length_matched_character_median": "A",
-            "burrows_delta": "B",
-            "function_word_delta": "B",
+            "cosine_delta": "B",
+            "function_word_cosine_delta": "B",
         }
         self.assertEqual(
             stylometry.view_family_leaders(leaders),
@@ -921,8 +932,8 @@ class PipelineTests(unittest.TestCase):
             "available": True,
             "metric_leaders": {
                 "character_ngram_best_three_mean": "A",
-                "burrows_delta": "A",
-                "function_word_delta": "B",
+                "cosine_delta": "A",
+                "function_word_cosine_delta": "B",
             },
         }
         adjustment = app._apply_review_agreement_adjustment(
@@ -981,8 +992,8 @@ class PipelineTests(unittest.TestCase):
             "available": True,
             "metric_leaders": {
                 "character_ngram_best_three_mean": "B",
-                "burrows_delta": "B",
-                "function_word_delta": "C",
+                "cosine_delta": "B",
+                "function_word_cosine_delta": "C",
             },
         }
         adjustment = app._apply_review_agreement_adjustment(result, snapshots, diagnostics)
@@ -1017,8 +1028,8 @@ class PipelineTests(unittest.TestCase):
             "available": True,
             "metric_leaders": {
                 "character_ngram_best_three_mean": "A",
-                "burrows_delta": "A",
-                "function_word_delta": "C",
+                "cosine_delta": "A",
+                "function_word_cosine_delta": "C",
             },
         }
         adjustment = app._apply_review_agreement_adjustment(
@@ -1070,8 +1081,8 @@ class PipelineTests(unittest.TestCase):
             "available": True,
             "metric_leaders": {
                 "character_ngram_best_three_mean": "B",
-                "burrows_delta": "A",
-                "function_word_delta": "B",
+                "cosine_delta": "A",
+                "function_word_cosine_delta": "B",
             },
         }
         adjustment = app._apply_review_agreement_adjustment(
@@ -1200,8 +1211,8 @@ class PipelineTests(unittest.TestCase):
             "available": True,
             "metric_leaders": {
                 "character_ngram_best_three_mean": "B",
-                "burrows_delta": "B",
-                "function_word_delta": "A",
+                "cosine_delta": "B",
+                "function_word_cosine_delta": "A",
             },
         }
         adjustment = app._apply_review_agreement_adjustment(result, snapshots, diagnostics)

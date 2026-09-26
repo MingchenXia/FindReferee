@@ -19,7 +19,7 @@ It can also compare several documents for likely common authorship.
 - Lower prose weight for 2026-and-later work that may have been AI-polished; stronger weight for original pre-2026 solo work
 - PDF metadata and low-weight TeX-habit analysis
 - Time-truncated direct and second-order citation-network candidate priors, with prior-collaborator penalties
-- Offline RapidFuzz overlap checks, character n-grams, topic-masked character n-grams (text distortion), Burrows Delta, function-word Delta, review-voice distance, and Lingua language detection
+- Offline RapidFuzz overlap checks, character n-grams, topic-masked character n-grams (text distortion), Cosine Delta over the most frequent words and over function words, review-voice distance, and Lingua language detection
 - A deterministic lexical error-fingerprint check: non-dictionary spellings the target shares with at least two independent works by one candidate, separated into likely misspellings, British spelling conventions, and unrecognized field terms
 - General Impostors verification against outside same-field authors from the citation network, giving a reproducible reference for the “No listed candidate” alternative
 - Multi-pass review with targeted follow-up rounds when finalists remain close
